@@ -105,7 +105,7 @@ ipython_config.py
 #   This is especially recommended for binary packages to ensure reproducibility, and is more
 #   commonly ignored for libraries.
 #   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
+# poetry.lock is tracked for VoiceBuddy (application, not library)
 #poetry.toml
 
 # pdm
@@ -205,3 +205,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+.DS_Store
+
+# VoiceBuddy test output files
+test_cartesia_output.wav
+sonic.wav
+test_cartesia_sonic.wav
