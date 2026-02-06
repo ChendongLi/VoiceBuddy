@@ -2,6 +2,12 @@
 
 AI + phone call + assistant.
 
+Small service businesses — realtors, plumbers, electricians, HVAC companies, law firm secretaries, dental offices, reception desks — miss inbound calls every day. A missed call is a missed customer. Hiring a receptionist to cover every line is expensive and does not scale. Existing robotic phone trees frustrate callers and erode trust in the business.
+
+VoiceBuddy is an AI-powered phone assistant that answers calls on behalf of these businesses. It is not a chatbot transplanted onto a phone line. It is purpose-built for phone: it listens, responds in under a second, handles interruptions naturally, and captures the information the business needs — all without the caller realising they are talking to a machine.
+
+The core bet: if latency is low enough and turn-taking is natural enough, callers will not notice the difference in the first 30 seconds of a call. That window is all we need to qualify the need, collect information, and route or schedule.
+
 ## Overview
 
 VoiceBuddy is a real-time voice assistant system that combines:
@@ -31,7 +37,7 @@ Read from WAV files with simulated real-time delays:
 from audio_sources import FileAudioSource
 
 audio_source = FileAudioSource(
-    file_path=Path("test/fixtures/test_audio.wav"),
+    file_path=Path("assets/audio/fixtures/test_audio.wav"),
     realtime_delay_ms=80
 )
 ```
@@ -72,11 +78,24 @@ Generate test audio files using Cartesia TTS:
 python test/create_test_audio.py
 ```
 
-This creates a 16-bit PCM WAV file at `test/fixtures/test_audio.wav`.
+This creates a 16-bit PCM WAV file at `assets/audio/fixtures/test_audio.wav`.
 
 ## Dependencies
 
-VoiceBuddy uses Poetry for dependency management.
+VoiceBuddy uses Poetry for dependency management (no `requirements.txt`; use `poetry install`).
+
+Environment setup:
+```bash
+cp .env.example .env
+# then edit .env with your real API keys; audio defaults are pre-filled
+```
+
+Pre-commit (format/lint):
+```bash
+poetry run pre-commit install
+poetry run pre-commit run --all-files
+```
+Formatting standards: Black + isort, line length 120.
 
 ### Installation
 

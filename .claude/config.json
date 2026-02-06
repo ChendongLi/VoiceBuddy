@@ -1,0 +1,15 @@
+{
+  "allowedCommands": [
+    "find",
+    "fd",
+    "rg",
+    "ls",
+    "tree"
+  ],
+  "allowedPaths": [
+    "doc/",
+    "logs/",
+    "*.wav",
+    "*.mp3"
+  ]
+}
