@@ -160,7 +160,17 @@ class APIValidator:
                 print(f"❌ Deepgram API error: {e}")
                 return False
 
-    async def _test_deepgram_streaming(self, api_key: str, audio_source: AudioSource, test_name: str = "file") -> bool:
+    async def _stream_audio(self, connection, audio_source: AudioSource, chunk_size: int) -> int:
+        """Stream audio chunks to a Deepgram connection. Returns the number of chunks sent."""
+        chunks_sent = 0
+        async for chunk in audio_source.get_chunks(chunk_size):
+            await connection._send(chunk)
+            chunks_sent += 1
+        return chunks_sent
+
+    async def _test_deepgram_streaming(
+        self, api_key: str, audio_source: AudioSource, test_name: str = "file", duration_seconds: float | None = None
+    ) -> bool:
         """Test Deepgram with WebSocket streaming (flux model)."""
         try:
             # Get audio metadata from source
@@ -180,11 +190,17 @@ class APIValidator:
             # Connect to WebSocket
             connection_start = time.time()
 
-            async with client.listen.v2.connect(
+            connect_kwargs = dict(
                 model="flux-general-en",
                 encoding="linear16",
                 sample_rate=str(framerate),  # Use actual sample rate from audio file
-            ) as connection:
+            )
+            # Enable EOT detection for mic mode (matching test_deepgram_mic.py)
+            if duration_seconds is not None:
+                connect_kwargs["eot_threshold"] = 0.7
+                connect_kwargs["eager_eot_threshold"] = 0.6
+
+            async with client.listen.v2.connect(**connect_kwargs) as connection:
 
                 result.connection_time_ms = (time.time() - connection_start) * 1000
                 print(f"✅ WebSocket connected ({result.connection_time_ms:.1f}ms)")
@@ -226,19 +242,27 @@ class APIValidator:
                 CHUNK_DELAY_MS = 80
                 CHUNK_SIZE = int((CHUNK_DELAY_MS / 1000.0) * framerate * channels * sample_width)
 
-                chunks_sent = 0
-                async for chunk in audio_source.get_chunks(CHUNK_SIZE):
-                    await connection._send(chunk)
-                    chunks_sent += 1
+                # Stream audio — with optional timeout for mic mode
+                if duration_seconds is not None:
+                    # Mic mode: stream for limited time, then fall through to validation
+                    try:
+                        await asyncio.wait_for(
+                            self._stream_audio(connection, audio_source, CHUNK_SIZE),
+                            timeout=duration_seconds,
+                        )
+                    except asyncio.TimeoutError:
+                        pass  # Expected for mic — fall through to validation
+                else:
+                    # File mode: stream all chunks
+                    chunks_sent = await self._stream_audio(connection, audio_source, CHUNK_SIZE)
+                    print(f"   Sent {chunks_sent} chunks")
 
                 audio_end_time = time.time()
-                print(f"   Sent {chunks_sent} chunks")
 
                 # Wait for transcript to stabilize (no updates for 300ms)
                 # This indicates EOT has been detected by Deepgram
                 max_wait = 5.0  # Maximum 5 seconds
                 stabilization_delay = 0.3  # 300ms without updates = EOT
-                last_check = result.last_transcript_time or audio_end_time
 
                 while (time.time() - audio_end_time) < max_wait:
                     await asyncio.sleep(0.05)  # Check every 50ms
@@ -310,32 +334,16 @@ class APIValidator:
         audio_source = FileAudioSource(test_audio_path, realtime_delay_ms=80)
         return await self._test_deepgram_streaming(api_key, audio_source, "file")
 
-    async def test_deepgram_mic_streaming(self, api_key: str, duration_seconds: int = 5) -> bool:
+    async def test_deepgram_mic_streaming(self, api_key: str, duration_seconds: float = 5) -> bool:
         """Test with real-time microphone."""
         print(f"   Mode: Microphone streaming ({duration_seconds}s duration)")
         print("   🎤 Please speak into your microphone...")
 
         try:
             audio_source = MicrophoneAudioSource(sample_rate=16000, channels=1)
-
-            # Create a task for the streaming test
-            streaming_task = asyncio.create_task(self._test_deepgram_streaming(api_key, audio_source, "microphone"))
-
-            # Wait for either completion or timeout
-            try:
-                return await asyncio.wait_for(streaming_task, timeout=duration_seconds)
-            except asyncio.TimeoutError:
-                # Cancel the streaming task
-                streaming_task.cancel()
-                try:
-                    await streaming_task
-                except asyncio.CancelledError:
-                    pass
-
-                print(f"   ⏱️  {duration_seconds}s timeout reached")
-                print("   ℹ️  Microphone test completed (timeout is normal)")
-                return True  # Timeout is expected for mic streaming
-
+            return await self._test_deepgram_streaming(
+                api_key, audio_source, "microphone", duration_seconds=duration_seconds
+            )
         except ImportError as e:
             print(f"❌ Microphone streaming error: {e}")
             print("   Install sounddevice: pip install sounddevice")
