@@ -55,6 +55,29 @@ audio_source = MicrophoneAudioSource(
 
 See [doc/audio_sources.md](doc/audio_sources.md) for detailed documentation.
 
+## Phase 3 Audio Echo Test
+
+Test the browser-to-server audio transport layer before integrating AI services.
+
+### Start the echo server
+```bash
+poetry run python src/server.py
+```
+
+### Browser test
+1. Open http://localhost:8765/ in Chrome
+2. Click **Start** and allow microphone access
+3. Speak — you should hear your voice echoed back
+4. RTT display should show < 200ms average
+5. Click **Stop** to end the session
+
+### Run automated tests
+```bash
+poetry run pytest test/test_echo_server.py -v
+```
+
+Tests verify: echo round-trip (bytes identical, RTT < 200ms), ping/pong latency (< 100ms), 100-chunk ordering, interleaved binary/text frames, HTTP serving, and JSONL log output with IDLE → USER_SPEAKING state transition.
+
 ## Phase 1 API Validation
 
 Test all API integrations:

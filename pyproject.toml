@@ -51,6 +51,12 @@ ignore = [
 quote-style = "double"
 indent-style = "space"
 
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+markers = [
+    "integration: tests that bind real TCP ports and require network",
+]
+
 [tool.black]
 line-length = 120
 target-version = ["py311"]

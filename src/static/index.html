@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VoiceBuddy — Audio Echo Test</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #1a1a2e; color: #e0e0e0;
+    display: flex; justify-content: center; align-items: center;
+    min-height: 100vh;
+  }
+  .card {
+    background: #16213e; border-radius: 12px; padding: 2rem;
+    width: 380px; box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 1.2rem; text-align: center; }
+  .status {
+    display: flex; align-items: center; gap: 0.5rem;
+    margin-bottom: 1rem; font-size: 0.9rem;
+  }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #555; flex-shrink: 0;
+  }
+  .dot.connected { background: #4caf50; }
+  .dot.streaming { background: #ff9800; animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: 0.4; } }
+  .stats {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.6rem;
+    margin-bottom: 1.2rem;
+  }
+  .stat { background: #0f3460; border-radius: 8px; padding: 0.7rem; text-align: center; }
+  .stat .label { font-size: 0.7rem; text-transform: uppercase; color: #888; }
+  .stat .value { font-size: 1.3rem; font-weight: bold; margin-top: 0.2rem; }
+  .buttons { display: flex; gap: 0.8rem; }
+  button {
+    flex: 1; padding: 0.7rem; border: none; border-radius: 8px;
+    font-size: 1rem; font-weight: 600; cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #startBtn { background: #4caf50; color: #fff; }
+  #stopBtn { background: #f44336; color: #fff; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>VoiceBuddy Echo Test</h1>
+  <div class="status">
+    <div class="dot" id="statusDot"></div>
+    <span id="statusText">Disconnected</span>
+  </div>
+  <div class="stats">
+    <div class="stat">
+      <div class="label">Ping RTT</div>
+      <div class="value" id="rttValue">-- ms</div>
+    </div>
+    <div class="stat">
+      <div class="label">Audio RTT</div>
+      <div class="value" id="audioRttValue">-- ms</div>
+    </div>
+    <div class="stat">
+      <div class="label">Chunks sent</div>
+      <div class="value" id="chunkCount">0</div>
+    </div>
+  </div>
+  <div class="buttons">
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" disabled>Stop</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  // --- Config ---
+  const TARGET_SAMPLE_RATE = 16000;
+  const CHUNK_SAMPLES = 320;           // 20ms at 16kHz
+  const CHUNK_BYTES = CHUNK_SAMPLES * 2; // 640 bytes (Int16)
+  const PING_INTERVAL_MS = 500;
+  const JITTER_BUFFER_MS = 40;
+  const RTT_WINDOW = 10;               // rolling average window
+
+  const AUDIO_RTT_REPORT_INTERVAL_MS = 1000;
+  const SEND_TS_MAP_MAX = 100;        // cap send-timestamp map size
+
+  // --- DOM refs ---
+  const startBtn = document.getElementById("startBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const statusDot = document.getElementById("statusDot");
+  const statusText = document.getElementById("statusText");
+  const rttValue = document.getElementById("rttValue");
+  const audioRttValue = document.getElementById("audioRttValue");
+  const chunkCountEl = document.getElementById("chunkCount");
+
+  // --- State ---
+  let ws = null;
+  let micStream = null;
+  let captureCtx = null;     // AudioContext for mic capture
+  let playbackCtx = null;    // Separate AudioContext for playback (AEC)
+  let workletNode = null;
+  let pingInterval = null;
+  let audioRttReportInterval = null;
+  let chunksSent = 0;
+  let chunksReceived = 0;
+  let rttSamples = [];
+  let audioRttSamples = [];
+  let sendTimestamps = new Map(); // seq -> performance.now()
+  let nextPlayTime = 0;
+
+  // --- AudioWorklet processor code (inline via Blob URL) ---
+  const workletCode = `
+class DownsampleProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.buffer = new Float32Array(0);
+    // Will be set from sampleRate global in worklet scope
+    this.inputRate = sampleRate;
+    this.outputRate = 16000;
+    this.ratio = this.inputRate / this.outputRate;
+    // Output 320 samples per post (20ms at 16kHz)
+    this.outputChunkSize = 320;
+  }
+
+  process(inputs, outputs, parameters) {
+    const input = inputs[0];
+    if (!input || !input[0]) return true;
+
+    const inputData = input[0];
+
+    // Append to buffer
+    const newBuf = new Float32Array(this.buffer.length + inputData.length);
+    newBuf.set(this.buffer);
+    newBuf.set(inputData, this.buffer.length);
+    this.buffer = newBuf;
+
+    // How many input samples needed for one output chunk
+    const inputNeeded = Math.ceil(this.outputChunkSize * this.ratio);
+
+    while (this.buffer.length >= inputNeeded) {
+      // Downsample via linear interpolation
+      const output = new Float32Array(this.outputChunkSize);
+      for (let i = 0; i < this.outputChunkSize; i++) {
+        const srcIdx = i * this.ratio;
+        const floor = Math.floor(srcIdx);
+        const ceil = Math.min(floor + 1, this.buffer.length - 1);
+        const frac = srcIdx - floor;
+        output[i] = this.buffer[floor] * (1 - frac) + this.buffer[ceil] * frac;
+      }
+
+      // Convert Float32 [-1,1] to Int16
+      const pcm = new Int16Array(this.outputChunkSize);
+      for (let i = 0; i < this.outputChunkSize; i++) {
+        const s = Math.max(-1, Math.min(1, output[i]));
+        pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+
+      this.port.postMessage(pcm.buffer, [pcm.buffer]);
+
+      // Advance buffer
+      this.buffer = this.buffer.slice(inputNeeded);
+    }
+
+    return true;
+  }
+}
+
+registerProcessor("downsample-processor", DownsampleProcessor);
+`;
+
+  // --- Helpers ---
+  function setStatus(text, cls) {
+    statusText.textContent = text;
+    statusDot.className = "dot" + (cls ? " " + cls : "");
+  }
+
+  function updateRtt(ms) {
+    rttSamples.push(ms);
+    if (rttSamples.length > RTT_WINDOW) rttSamples.shift();
+    const avg = rttSamples.reduce((a, b) => a + b, 0) / rttSamples.length;
+    rttValue.textContent = avg.toFixed(1) + " ms";
+  }
+
+  function updateAudioRtt(ms) {
+    audioRttSamples.push(ms);
+    if (audioRttSamples.length > RTT_WINDOW) audioRttSamples.shift();
+    const avg = audioRttSamples.reduce((a, b) => a + b, 0) / audioRttSamples.length;
+    audioRttValue.textContent = avg.toFixed(1) + " ms";
+  }
+
+  // --- Playback ---
+  function playPcmChunk(int16Array) {
+    if (!playbackCtx) return;
+
+    const floats = new Float32Array(int16Array.length);
+    for (let i = 0; i < int16Array.length; i++) {
+      floats[i] = int16Array[i] / (int16Array[i] < 0 ? 0x8000 : 0x7FFF);
+    }
+
+    const buf = playbackCtx.createBuffer(1, floats.length, TARGET_SAMPLE_RATE);
+    buf.getChannelData(0).set(floats);
+
+    const src = playbackCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(playbackCtx.destination);
+
+    const now = playbackCtx.currentTime;
+    if (nextPlayTime < now) {
+      // First chunk or underrun — add jitter buffer delay
+      nextPlayTime = now + JITTER_BUFFER_MS / 1000;
+    }
+    src.start(nextPlayTime);
+    nextPlayTime += buf.duration;
+  }
+
+  // --- Start ---
+  async function start() {
+    startBtn.disabled = true;
+    chunksSent = 0;
+    chunksReceived = 0;
+    rttSamples = [];
+    audioRttSamples = [];
+    sendTimestamps = new Map();
+    nextPlayTime = 0;
+    chunkCountEl.textContent = "0";
+    rttValue.textContent = "-- ms";
+    audioRttValue.textContent = "-- ms";
+
+    try {
+      // Create separate AudioContexts (important for AEC)
+      captureCtx = new AudioContext({ sampleRate: 48000 });
+      playbackCtx = new AudioContext({ sampleRate: 48000 });
+
+      // Get mic stream with echo cancellation
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+
+      // Register AudioWorklet
+      const blob = new Blob([workletCode], { type: "application/javascript" });
+      const workletUrl = URL.createObjectURL(blob);
+      await captureCtx.audioWorklet.addModule(workletUrl);
+      URL.revokeObjectURL(workletUrl);
+
+      // Connect mic -> worklet
+      const micSource = captureCtx.createMediaStreamSource(micStream);
+      workletNode = new AudioWorkletNode(captureCtx, "downsample-processor");
+      micSource.connect(workletNode);
+      // Worklet doesn't produce output — connect to avoid garbage collection
+      workletNode.connect(captureCtx.destination);
+
+      // Open WebSocket
+      const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
+      ws = new WebSocket(wsProto + "//" + location.host + "/ws");
+      ws.binaryType = "arraybuffer";
+
+      ws.onopen = () => {
+        setStatus("Connected — streaming", "streaming");
+        stopBtn.disabled = false;
+
+        // Forward PCM chunks from worklet to WebSocket
+        workletNode.port.onmessage = (e) => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(e.data);
+            // Track send timestamp for audio RTT (cap map size)
+            sendTimestamps.set(chunksSent, performance.now());
+            if (sendTimestamps.size > SEND_TS_MAP_MAX) {
+              const oldest = sendTimestamps.keys().next().value;
+              sendTimestamps.delete(oldest);
+            }
+            chunksSent++;
+            chunkCountEl.textContent = chunksSent;
+          }
+        };
+
+        // Start ping interval
+        pingInterval = setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "ping", t: performance.now() }));
+          }
+        }, PING_INTERVAL_MS);
+
+        // Periodically report audio RTT to server for JSONL logging
+        audioRttReportInterval = setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN && audioRttSamples.length > 0) {
+            const avg = audioRttSamples.reduce((a, b) => a + b, 0) / audioRttSamples.length;
+            const min = Math.min(...audioRttSamples);
+            const max = Math.max(...audioRttSamples);
+            ws.send(JSON.stringify({
+              type: "audio_rtt",
+              avg_ms: +avg.toFixed(2),
+              min_ms: +min.toFixed(2),
+              max_ms: +max.toFixed(2),
+              samples: audioRttSamples.length,
+            }));
+          }
+        }, AUDIO_RTT_REPORT_INTERVAL_MS);
+      };
+
+      ws.onmessage = (e) => {
+        if (e.data instanceof ArrayBuffer) {
+          // Binary — echoed PCM audio
+          const sendTs = sendTimestamps.get(chunksReceived);
+          if (sendTs !== undefined) {
+            updateAudioRtt(performance.now() - sendTs);
+            sendTimestamps.delete(chunksReceived);
+          }
+          chunksReceived++;
+          const int16 = new Int16Array(e.data);
+          playPcmChunk(int16);
+        } else {
+          // Text — JSON control message
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === "pong" && msg.t != null) {
+              const rtt = performance.now() - msg.t;
+              updateRtt(rtt);
+            }
+          } catch (err) {
+            console.warn("Bad JSON from server:", err);
+          }
+        }
+      };
+
+      ws.onclose = () => {
+        setStatus("Disconnected", "");
+        cleanup();
+      };
+
+      ws.onerror = (err) => {
+        console.error("WebSocket error:", err);
+        setStatus("Error", "");
+        cleanup();
+      };
+
+    } catch (err) {
+      console.error("Start failed:", err);
+      setStatus("Error: " + err.message, "");
+      cleanup();
+    }
+  }
+
+  // --- Stop / Cleanup ---
+  function cleanup() {
+    if (pingInterval) { clearInterval(pingInterval); pingInterval = null; }
+    if (audioRttReportInterval) { clearInterval(audioRttReportInterval); audioRttReportInterval = null; }
+    if (workletNode) { workletNode.disconnect(); workletNode = null; }
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    if (captureCtx) { captureCtx.close(); captureCtx = null; }
+    if (playbackCtx) { playbackCtx.close(); playbackCtx = null; }
+    if (ws && ws.readyState <= WebSocket.OPEN) { ws.close(); }
+    ws = null;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  }
+
+  function stop() {
+    setStatus("Disconnected", "");
+    cleanup();
+  }
+
+  // --- Wire up buttons ---
+  startBtn.addEventListener("click", start);
+  stopBtn.addEventListener("click", stop);
+})();
+</script>
+</body>
+</html>
