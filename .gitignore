@@ -210,3 +210,5 @@ __marimo__/
 .vscode/
 # VoiceBuddy generated audio outputs
 assets/audio/outputs/*.wav
+
+logs/

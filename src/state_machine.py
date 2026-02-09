@@ -75,10 +75,18 @@ class StateMachine:
             (State.FILLER_RESPONSE, Event.TTS_PLAYBACK_DONE): State.FILLER_RESPONSE,
             # G1: TTS_AUDIO_READY while already speaking — self-loop for marker recording
             (State.BOT_SPEAKING, Event.TTS_AUDIO_READY): State.BOT_SPEAKING,
+            (State.FILLER_RESPONSE, Event.TTS_AUDIO_READY): State.FILLER_RESPONSE,
             # G3: false barge-in with no follow-up speech — escape to IDLE
             (State.BARGE_IN_DETECTED, Event.SILENCE_TIMEOUT): State.IDLE,
             # G4: user started speaking then went silent
             (State.USER_SPEAKING, Event.SILENCE_TIMEOUT): State.IDLE,
+            # G5: Deepgram false speech events during non-listening states — absorb silently
+            (State.PROCESSING, Event.START_OF_TURN): State.PROCESSING,
+            (State.PROCESSING, Event.END_OF_TURN): State.PROCESSING,
+            (State.BOT_SPEAKING, Event.START_OF_TURN): State.BOT_SPEAKING,
+            (State.BOT_SPEAKING, Event.END_OF_TURN): State.BOT_SPEAKING,
+            (State.FILLER_RESPONSE, Event.START_OF_TURN): State.FILLER_RESPONSE,
+            (State.FILLER_RESPONSE, Event.END_OF_TURN): State.FILLER_RESPONSE,
         }
 
     def handle(self, event: Event, data: dict | None = None) -> State:
