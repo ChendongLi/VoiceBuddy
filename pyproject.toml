@@ -18,6 +18,8 @@ numpy = "^2.2.4"
 pydub = "^0.25.1"
 python-dotenv = "^1.2.1"
 pydantic = "^2.12.5"
+silero-vad = "^5.1"
+onnxruntime = "^1.16"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"

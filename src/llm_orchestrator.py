@@ -31,6 +31,7 @@ class LLMOrchestrator:
     def __init__(self):
         self.client = AsyncAnthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
         self.conversation_history: list[dict] = []
+        self._current_partial_text = ""
 
         # Callbacks (synchronous — push to event queue)
         self.on_filler_ready: Callable[[str, float], None] | None = None
@@ -99,6 +100,7 @@ class LLMOrchestrator:
                     ttft_ms = (time.time() * 1000) - start_ms
 
                 full_text += token
+                self._current_partial_text = full_text
 
                 # Stream tokens to sentence splitter via callback
                 if self.on_full_token:
@@ -119,8 +121,22 @@ class LLMOrchestrator:
             cache_create,
         )
 
+        # Clear partial tracking
+        self._current_partial_text = ""
+
         # Append assistant response to conversation history
         self.conversation_history.append({"role": "assistant", "content": full_text})
 
         if self.on_full_ready and full_text.strip():
             self.on_full_ready(full_text.strip(), ttft_ms)
+
+    def mark_interrupted(self):
+        """Record partial response in history when barge-in interrupts."""
+        partial = self._current_partial_text.strip()
+        self._current_partial_text = ""
+        if self.conversation_history and self.conversation_history[-1]["role"] == "assistant":
+            return  # already had a complete entry
+        if partial:
+            self.conversation_history.append({"role": "assistant", "content": partial + " [interrupted]"})
+        elif self.conversation_history and self.conversation_history[-1]["role"] == "user":
+            self.conversation_history.append({"role": "assistant", "content": "[interrupted before response]"})

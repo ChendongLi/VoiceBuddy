@@ -207,3 +207,27 @@ class TestEdgeCases:
         result = _collect_sentences("CoolBreeze Inc. is the best HVAC company in the entire greater metro area today. ")
         assert len(result) == 1
         assert "Inc." in result[0]
+
+
+class TestDiscard:
+    def test_discard_clears_buffer(self):
+        """Feed tokens, call discard(), verify nothing is emitted on flush."""
+        sentences = []
+        splitter = SentenceSplitter(on_sentence=lambda s: sentences.append(s))
+        splitter.feed("Hello world, this is a test sentence that ")
+        splitter.feed("should not be emitted after discard. ")
+        splitter.discard()
+        splitter.flush()
+        assert len(sentences) == 0
+
+    def test_discard_then_new_input(self):
+        """After discard, new input is processed normally."""
+        sentences = []
+        splitter = SentenceSplitter(on_sentence=lambda s: sentences.append(s))
+        splitter.feed("This will be discarded and never seen. ")
+        splitter.discard()
+        splitter.feed("This is brand new text that should be emitted properly. ")
+        splitter.flush()
+        assert len(sentences) == 1
+        assert "brand new" in sentences[0]
+        assert "discarded" not in sentences[0]

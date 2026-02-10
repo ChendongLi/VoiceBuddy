@@ -213,6 +213,14 @@ registerProcessor("downsample-processor", DownsampleProcessor);
   }
 
   // --- Playback ---
+  function stopPlayback() {
+    if (playbackCtx) {
+      playbackCtx.close();
+      playbackCtx = new AudioContext({ sampleRate: 48000 });
+    }
+    nextPlayTime = 0;
+  }
+
   function playPcmChunk(int16Array) {
     if (!playbackCtx) return;
 
@@ -327,6 +335,12 @@ registerProcessor("downsample-processor", DownsampleProcessor);
               setStatus("Connected — listening", "streaming");
               stateValue.textContent = "IDLE";
               nextPlayTime = 0; // Reset jitter buffer for next turn
+
+            } else if (msg.type === "stop_playback") {
+              stopPlayback();
+              setStatus("Connected — listening", "streaming");
+              stateValue.textContent = "LISTENING";
+              liveTranscript.textContent = "";
             }
           } catch (err) {
             console.warn("Bad JSON from server:", err);

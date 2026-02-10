@@ -137,6 +137,60 @@ def test_barge_in_during_filler(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Barge-in with full recovery
+# ---------------------------------------------------------------------------
+
+
+def test_barge_in_full_cycle_with_recovery(tmp_path: Path):
+    """BOT_SPEAKING -> BARGE_IN -> USER_SPEAKING -> full new turn completes."""
+    sm = make_sm(tmp_path)
+    # First turn
+    sm.handle(Event.START_OF_TURN)
+    sm.handle(Event.END_OF_TURN)
+    sm.handle(Event.LLM_FULL_READY)
+    assert sm.current_state == State.BOT_SPEAKING
+
+    # Barge-in
+    sm.handle(Event.BARGE_IN_DETECTED)
+    assert sm.current_state == State.BARGE_IN_DETECTED
+    assert "barge_in_detected" in sm.ctx.markers
+
+    # Start new utterance
+    sm.handle(Event.START_OF_TURN)
+    assert sm.current_state == State.USER_SPEAKING
+
+    # Complete the new turn
+    sm.handle(Event.END_OF_TURN)
+    sm.handle(Event.LLM_FULL_READY)
+    sm.handle(Event.TTS_PLAYBACK_DONE)
+    assert sm.current_state == State.IDLE
+    assert sm.ctx.turn_id == 2
+
+
+def test_barge_in_during_processing_with_recovery(tmp_path: Path):
+    """PROCESSING -> BARGE_IN -> USER_SPEAKING -> full new turn completes."""
+    sm = make_sm(tmp_path)
+    sm.handle(Event.START_OF_TURN)
+    sm.handle(Event.END_OF_TURN)
+    assert sm.current_state == State.PROCESSING
+
+    # Barge-in during processing
+    sm.handle(Event.BARGE_IN_DETECTED)
+    assert sm.current_state == State.BARGE_IN_DETECTED
+
+    sm.handle(Event.START_OF_TURN)
+    assert sm.current_state == State.USER_SPEAKING
+
+    # Complete the new turn
+    sm.handle(Event.END_OF_TURN)
+    sm.handle(Event.LLM_FILLER_READY)
+    sm.handle(Event.LLM_FULL_READY)
+    sm.handle(Event.TTS_PLAYBACK_DONE)
+    assert sm.current_state == State.IDLE
+    assert sm.ctx.turn_id == 2
+
+
+# ---------------------------------------------------------------------------
 # Silence timeout
 # ---------------------------------------------------------------------------
 

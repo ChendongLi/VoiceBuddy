@@ -77,6 +77,11 @@ class SentenceSplitter:
         self._buffer += token
         self._try_emit()
 
+    def discard(self):
+        """Discard all buffered content without emitting (used on barge-in)."""
+        self._buffer = ""
+        self._pending_short = ""
+
     def flush(self):
         """Emit whatever remains in the buffer (called when LLM stream ends)."""
         remaining = (self._pending_short + self._buffer).strip()

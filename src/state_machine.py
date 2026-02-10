@@ -157,6 +157,8 @@ class StateMachine:
             self.ctx.markers["tts_first_byte"] = now_ms
         elif event == Event.TTS_PLAYBACK_DONE:
             self.ctx.markers["playback_done"] = now_ms
+        elif event == Event.BARGE_IN_DETECTED:
+            self.ctx.markers["barge_in_detected"] = now_ms
 
     def _log_transition(self, from_state: State, to_state: State, event: Event, data: dict) -> None:
         meta = {"event": event.name}

@@ -28,6 +28,7 @@ from llm_orchestrator import LLMOrchestrator
 from sentence_splitter import SentenceSplitter
 from state_machine import Event, State, StateMachine
 from tts_client import TTSClient
+from vad_detector import VADDetector
 
 logger = logging.getLogger("voicebuddy.server")
 
@@ -98,6 +99,14 @@ async def handle_connection(websocket):
     def on_full_token(token):
         event_queue.put_nowait(("llm_full_token", {"token": token}))
 
+    # --- VAD callbacks (synchronous — push to event queue) ---
+
+    def on_vad_speech_start():
+        event_queue.put_nowait(("vad_speech_start", {}))
+
+    def on_vad_speech_end():
+        event_queue.put_nowait(("vad_speech_end", {}))
+
     # --- Initialize service clients ---
 
     dg = DeepgramFluxClient(on_start_of_turn, on_end_of_turn, on_transcript_update)
@@ -107,6 +116,20 @@ async def handle_connection(websocket):
     llm.on_full_token = on_full_token
 
     tts = TTSClient()
+    vad = VADDetector(on_speech_start=on_vad_speech_start, on_speech_end=on_vad_speech_end)
+    vad_speech_active = False
+
+    # Barge-in grace window (handles Deepgram-first ordering)
+    last_vad_speech_start_ms: float = 0.0
+    pending_barge_in: dict | None = None
+    BARGE_IN_GRACE_MS = 200.0
+
+    # Cancellation state
+    llm_task: asyncio.Task | None = None
+    tts_cancel_event = asyncio.Event()
+
+    # Silence policy
+    silence_timer_task: asyncio.Task | None = None
 
     # Sentence splitter feeds TTS queue
     turn_context_id = f"{session_id[:8]}-0"
@@ -121,16 +144,169 @@ async def handle_connection(websocket):
     await dg.connect()
     await tts.connect()
 
+    # --- Cancel pipeline (barge-in) ---
+
+    async def cancel_pipeline():
+        """Cancel in-flight LLM and TTS on barge-in."""
+        nonlocal llm_task
+
+        # 0. Log cancellation marker before clearing state
+        log.log_latency(
+            session_id,
+            sm.ctx.turn_id,
+            "turn_cancelled",
+            time.time() * 1000 - sm.ctx.markers.get("user_started_speaking", time.time() * 1000),
+            metadata={"from_state": sm.current_state.name},
+        )
+
+        # 1. Cancel LLM task
+        if llm_task and not llm_task.done():
+            llm_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await llm_task
+            llm_task = None
+
+        # 2. Drain TTS queue
+        while not tts_queue.empty():
+            try:
+                tts_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+        # 3. Signal TTS worker to abort current synthesis
+        tts_cancel_event.set()
+
+        # 4. Cancel Cartesia stream
+        await tts.cancel_current()
+
+        # 5. Discard sentence splitter buffer
+        splitter.discard()
+
+        # 6. Record interrupted response in conversation history
+        llm.mark_interrupted()
+
+        # 7. Signal browser to stop playback
+        await websocket.send(json.dumps({"type": "stop_playback"}))
+
+        # 8. Reset VAD
+        vad.reset()
+
+    # --- Silence policy ---
+
+    async def silence_policy():
+        """Graduated silence responses — prompt after 2s, disconnect after 5s."""
+        try:
+            await asyncio.sleep(2.0)
+            if sm.current_state in {State.PROCESSING, State.FILLER_RESPONSE}:
+                tts_queue.put_nowait(("Are you still there?", turn_context_id))
+                await websocket.send(json.dumps({"type": "filler", "text": "Are you still there?"}))
+
+            await asyncio.sleep(3.0)  # 5s total
+            if sm.current_state in {State.PROCESSING, State.FILLER_RESPONSE}:
+                goodbye = "I'm sorry, it seems we lost the connection. Feel free to call back anytime."
+                tts_queue.put_nowait((goodbye, turn_context_id))
+                await websocket.send(json.dumps({"type": "response", "text": goodbye}))
+                await asyncio.sleep(5.0)
+                await websocket.close()
+        except asyncio.CancelledError:
+            pass
+
+    def start_silence_timer():
+        nonlocal silence_timer_task
+        cancel_silence_timer()
+        silence_timer_task = asyncio.create_task(silence_policy())
+
+    def cancel_silence_timer():
+        nonlocal silence_timer_task
+        if silence_timer_task and not silence_timer_task.done():
+            silence_timer_task.cancel()
+            silence_timer_task = None
+
     # --- Event processor (background task) ---
 
     async def process_events():
-        nonlocal turn_context_id
+        nonlocal turn_context_id, vad_speech_active, llm_task, last_vad_speech_start_ms, pending_barge_in
         while True:
             event_type, data = await event_queue.get()
             try:
-                if event_type == "start_of_turn":
-                    sm.handle(Event.START_OF_TURN)
-                    logger.info("[%s] START_OF_TURN (turn %d)", session_id[:8], data["turn_index"])
+                if event_type == "vad_speech_start":
+                    vad_speech_active = True
+                    now_ms = time.time() * 1000
+                    last_vad_speech_start_ms = now_ms
+                    sm.ctx.markers["vad_speech_start"] = now_ms
+
+                    # Check for pending barge-in from Deepgram (Deepgram-first ordering)
+                    barge_in_states = {State.BOT_SPEAKING, State.FILLER_RESPONSE, State.PROCESSING}
+                    if (
+                        pending_barge_in
+                        and (now_ms - pending_barge_in["ts_ms"]) < BARGE_IN_GRACE_MS
+                        and sm.current_state in barge_in_states
+                    ):
+                        turn_index = pending_barge_in["turn_index"]
+                        pending_barge_in = None
+                        sm.handle(Event.BARGE_IN_DETECTED)
+                        await cancel_pipeline()
+                        vad_speech_active = False
+                        cancel_silence_timer()
+                        sm.handle(Event.START_OF_TURN)
+                        logger.info("[%s] BARGE-IN deferred (turn %d)", session_id[:8], turn_index)
+
+                        if "vad_speech_start" in sm.ctx.markers and "barge_in_detected" in sm.ctx.markers:
+                            log.log_latency(
+                                session_id,
+                                sm.ctx.turn_id,
+                                "barge_in_reaction",
+                                sm.ctx.markers["barge_in_detected"] - sm.ctx.markers["vad_speech_start"],
+                            )
+
+                elif event_type == "vad_speech_end":
+                    vad_speech_active = False
+
+                elif event_type == "start_of_turn":
+                    current = sm.current_state
+                    barge_in_states = {State.BOT_SPEAKING, State.FILLER_RESPONSE, State.PROCESSING}
+
+                    # Check VAD: currently active OR recently started (grace window)
+                    now_ms = time.time() * 1000
+                    vad_recently_active = vad_speech_active or (
+                        last_vad_speech_start_ms > 0 and (now_ms - last_vad_speech_start_ms) < BARGE_IN_GRACE_MS
+                    )
+
+                    if current in barge_in_states and vad_recently_active:
+                        # Real barge-in confirmed by VAD + Deepgram
+                        pending_barge_in = None  # Clear any pending
+                        sm.handle(Event.BARGE_IN_DETECTED)
+                        await cancel_pipeline()
+                        vad_speech_active = False
+                        cancel_silence_timer()
+                        # Transition to USER_SPEAKING for the new utterance
+                        sm.handle(Event.START_OF_TURN)
+                        logger.info("[%s] BARGE-IN (turn %d)", session_id[:8], data["turn_index"])
+
+                        # Log barge-in reaction time
+                        if "vad_speech_start" in sm.ctx.markers and "barge_in_detected" in sm.ctx.markers:
+                            log.log_latency(
+                                session_id,
+                                sm.ctx.turn_id,
+                                "barge_in_reaction",
+                                sm.ctx.markers["barge_in_detected"] - sm.ctx.markers["vad_speech_start"],
+                            )
+                    elif current in barge_in_states:
+                        # Deepgram first — defer, wait for VAD within grace window
+                        pending_barge_in = {"turn_index": data["turn_index"], "ts_ms": now_ms}
+                        logger.debug(
+                            "[%s] START_OF_TURN deferred, awaiting VAD (turn %d)",
+                            session_id[:8],
+                            data["turn_index"],
+                        )
+                    elif current in {State.IDLE, State.BARGE_IN_DETECTED}:
+                        # Normal START_OF_TURN in listening states
+                        sm.handle(Event.START_OF_TURN)
+                        cancel_silence_timer()
+                        logger.info("[%s] START_OF_TURN (turn %d)", session_id[:8], data["turn_index"])
+                    else:
+                        # False speech in non-listening state — drop silently
+                        logger.debug("[%s] Dropping START_OF_TURN in %s (no VAD)", session_id[:8], current.name)
 
                 elif event_type == "transcript_update":
                     # Send partial transcript to browser for live display
@@ -166,10 +342,13 @@ async def handle_connection(websocket):
                         # Set up context_id for this turn's TTS sentences
                         turn_context_id = f"{session_id[:8]}-{sm.ctx.turn_id}"
                         # Fire LLM processing
-                        asyncio.create_task(llm.process_turn(transcript))
+                        llm_task = asyncio.create_task(llm.process_turn(transcript))
+                        # Start silence policy timer
+                        start_silence_timer()
 
                 elif event_type == "llm_filler_ready":
                     sm.handle(Event.LLM_FILLER_READY)
+                    cancel_silence_timer()
                     filler_text = data["text"]
 
                     # Log Stage 3: filler TTFT
@@ -217,6 +396,7 @@ async def handle_connection(websocket):
 
                 elif event_type == "tts_first_byte":
                     sm.handle(Event.TTS_AUDIO_READY)
+                    cancel_silence_timer()
                     # Log Stage 4: TTS first byte
                     if "user_stopped_speaking" in sm.ctx.markers:
                         log.log_latency(
@@ -255,8 +435,11 @@ async def handle_connection(websocket):
                 break
             sentence, context_id = item
             first_byte = True
+            tts_cancel_event.clear()
             try:
                 async for audio_chunk in tts.synthesize(sentence, context_id=context_id):
+                    if tts_cancel_event.is_set():
+                        break
                     if first_byte:
                         ts_ms = time.time() * 1000
                         if first_byte_of_turn:
@@ -265,8 +448,13 @@ async def handle_connection(websocket):
                         first_byte = False
                     await websocket.send(audio_chunk)  # Binary frame → browser plays it
             except Exception as e:
-                log.log_error(session_id, sm.ctx.turn_id, "tts_error", str(e))
-                logger.warning("[%s] TTS error: %s", session_id[:8], e)
+                if not tts_cancel_event.is_set():
+                    log.log_error(session_id, sm.ctx.turn_id, "tts_error", str(e))
+                    logger.warning("[%s] TTS error: %s", session_id[:8], e)
+
+            if tts_cancel_event.is_set():
+                first_byte_of_turn = True
+                continue
 
             # Check if TTS queue is empty — if so, this turn's audio is done
             if tts_queue.empty():
@@ -281,7 +469,8 @@ async def handle_connection(websocket):
     try:
         async for message in websocket:
             if isinstance(message, bytes):
-                # Binary frame — forward mic audio to Deepgram (no echo)
+                # Binary frame — feed VAD and forward mic audio to Deepgram
+                vad.feed(message)
                 await dg.send_audio(message)
             else:
                 # Text frame — JSON control messages
@@ -305,6 +494,9 @@ async def handle_connection(websocket):
         logger.error("[%s] Connection error: %s", session_id[:8], e)
         log.log_error(session_id, sm.ctx.turn_id, "connection_error", str(e))
     finally:
+        # 0. Cancel silence timer
+        cancel_silence_timer()
+
         # 1. Stop TTS worker gracefully
         tts_queue.put_nowait(None)
         with contextlib.suppress(asyncio.TimeoutError):

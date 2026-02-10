@@ -35,6 +35,7 @@ class TTSClient:
         self._voice_id = os.environ.get("CARTESIA_VOICE_ID")
         self._client = AsyncCartesia(api_key=self._api_key)
         self._ws = None
+        self._current_context_id = None
 
     async def connect(self):
         """Open a persistent WebSocket connection to Cartesia."""
@@ -54,6 +55,8 @@ class TTSClient:
         if not self._ws:
             raise RuntimeError("TTS WebSocket not connected — call connect() first")
 
+        self._current_context_id = context_id
+
         send_kwargs = {
             "model_id": "sonic-3",
             "transcript": text,
@@ -65,12 +68,24 @@ class TTSClient:
 
         generator = await self._ws.send(**send_kwargs)
 
-        async for chunk in generator:
-            if chunk.audio:
-                audio = chunk.audio
-                # Guard: raw PCM must NOT start with WAV header
-                assert not audio[:4] == b"RIFF", "Received WAV header — expected raw PCM. Check output_format."
-                yield audio
+        try:
+            async for chunk in generator:
+                if chunk.audio:
+                    audio = chunk.audio
+                    # Guard: raw PCM must NOT start with WAV header
+                    assert not audio[:4] == b"RIFF", "Received WAV header — expected raw PCM. Check output_format."
+                    yield audio
+        finally:
+            self._current_context_id = None
+
+    async def cancel_current(self):
+        """Cancel active synthesis stream (best-effort)."""
+        if self._ws and self._current_context_id:
+            try:
+                await self._ws.cancel(context_id=self._current_context_id)
+            except Exception:
+                pass
+            self._current_context_id = None
 
     async def close(self):
         """Close the Cartesia WebSocket and client."""
