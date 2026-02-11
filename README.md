@@ -8,145 +8,179 @@ VoiceBuddy is an AI-powered phone assistant that answers calls on behalf of thes
 
 The core bet: if latency is low enough and turn-taking is natural enough, callers will not notice the difference in the first 30 seconds of a call. That window is all we need to qualify the need, collect information, and route or schedule.
 
-## Overview
+## Architecture
 
-VoiceBuddy is a real-time voice assistant system that combines:
-- **Deepgram Flux** - Speech-to-text transcription
-- **Claude (Anthropic)** - AI conversation handling
-- **Cartesia Sonic 3** - Text-to-speech with voice cloning
+```
+Browser mic → WebSocket → Server
+                            ├── Deepgram Flux v2 (STT)
+                            │     ├── StartOfTurn → state machine
+                            │     └── EndOfTurn + transcript
+                            │           ↓
+                            ├── Claude Haiku (filler) ──→ TTS queue
+                            ├── Claude Sonnet (full)
+                            │     └── tokens → SentenceSplitter → TTS queue
+                            │           ↓
+                            ├── Cartesia Sonic 3 (TTS)
+                            │     └── PCM audio chunks → WebSocket → Browser speaker
+                            │
+                            ├── Silero VAD (barge-in detection)
+                            │     └── VAD + StartOfTurn dual gate
+                            │           → cancel_pipeline() → stop_playback
+                            │
+                            └── Silence policy (2s prompt, 5s goodbye)
+```
 
-## Audio Configuration
+All callbacks (Deepgram SDK, LLM streaming) push events to an `asyncio.Queue`. An event processor task drives the state machine and dispatches work. A separate TTS worker task consumes a sentence queue and streams audio to the browser. This avoids threading issues and keeps the WebSocket loop responsive.
 
-VoiceBuddy uses **16-bit PCM audio** at **16kHz** for optimal compatibility with Deepgram and minimal latency.
+### State Machine
 
-Audio settings in `.env`:
+```
+IDLE → USER_SPEAKING → PROCESSING → BOT_SPEAKING → IDLE
+                    ↘  FILLER_RESPONSE ↗
+                         ↕
+                    BARGE_IN_DETECTED → USER_SPEAKING (new turn)
+```
+
+All transitions are pre-defined and validated. Invalid transitions are logged and ignored, never crash the session.
+
+## Tech Stack
+
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| STT | Deepgram Flux v2 | Real-time speech-to-text via WebSocket |
+| LLM (filler) | Claude Haiku 4.5 | Fast acknowledgment (5-15 words, <600ms) |
+| LLM (full) | Claude Sonnet 4.5 | Full response with prompt caching |
+| TTS | Cartesia Sonic 3 | Voice synthesis via WebSocket, raw PCM streaming |
+| VAD | Silero VAD v5 (ONNX) | Server-side voice activity detection |
+| Transport | WebSocket (websockets 16.0) | Browser audio + JSON control messages |
+| Frontend | AudioWorklet + Web Audio API | Mic capture + TTS playback |
+
+### Audio Format
+
+16kHz, 16-bit signed PCM, mono throughout the pipeline. Browser sends 20ms chunks (640 bytes), server buffers to 80ms (2560 bytes) for Deepgram. TTS returns raw PCM (no WAV headers).
+
+## Latency Pipeline
+
+| Stage | Metric | Target |
+|-------|--------|--------|
+| 1. EOT detection | User stop → Deepgram EndOfTurn | <350ms p50 |
+| 2. Transcript | EndOfTurn → transcript available | ~50ms |
+| 3. LLM TTFT | Transcript → first LLM token | <600ms (filler) |
+| 4. TTS first byte | Sentence ready → first audio chunk | <200ms |
+| 5. End-to-end | User stop → first audio in browser | <1000ms p75 |
+
+All stages are logged to `logs/voicebuddy.jsonl` per session and turn.
+
+## Barge-In
+
+Users can interrupt the bot mid-sentence. Barge-in uses a dual-gate to avoid false positives:
+
+1. **Silero VAD** confirms sustained speech (>100ms above 0.5 threshold)
+2. **Deepgram StartOfTurn** confirms real words (not background noise)
+
+Both signals must fire while bot is speaking. On barge-in, `cancel_pipeline()` atomically: cancels the LLM task, drains the TTS queue, cancels Cartesia synthesis, discards the sentence buffer, records partial response in conversation history, sends `stop_playback` to the browser, and resets VAD state.
+
+## Silence Policy
+
+After end-of-turn with no response activity:
+
+| Delay | Action |
+|-------|--------|
+| 2s | "Are you still there?" (TTS prompt) |
+| 5s | Goodbye message + disconnect |
+
+Cancelled by any speech, filler response, or TTS activity.
+
+## Setup
+
+### Prerequisites
+
+- Python 3.11+
+- [Poetry](https://python-poetry.org/)
+- API keys: Deepgram, Anthropic (Claude), Cartesia
+
+### Install
+
 ```bash
-AUDIO_SAMPLE_RATE=16000
-AUDIO_ENCODING=pcm_s16le
-AUDIO_CONTAINER=wav
-AUDIO_CHANNELS=1
+poetry install
 ```
 
-## Audio Sources
+### Configure
 
-VoiceBuddy supports two audio input modes:
-
-### File Streaming
-Read from WAV files with simulated real-time delays:
-```python
-from audio_sources import FileAudioSource
-
-audio_source = FileAudioSource(
-    file_path=Path("assets/audio/fixtures/test_audio.wav"),
-    realtime_delay_ms=80
-)
+```bash
+cp .env.example .env
+# Edit .env with your API keys
+# Audio defaults (16kHz PCM) are pre-filled
 ```
 
-### Microphone Streaming
-Capture from system microphone in real-time:
-```python
-from audio_sources import MicrophoneAudioSource
+### Pre-commit
 
-audio_source = MicrophoneAudioSource(
-    sample_rate=16000,
-    channels=1
-)
+```bash
+poetry run pre-commit install
 ```
 
-See [doc/audio_sources.md](doc/audio_sources.md) for detailed documentation.
+Formatting: Black + isort, line length 120.
 
-## Phase 3 Audio Echo Test
+## Usage
 
-Test the browser-to-server audio transport layer before integrating AI services.
+### Start the server
 
-### Start the echo server
 ```bash
 poetry run python src/server.py
 ```
 
-### Browser test
+### Browser client
+
 1. Open http://localhost:8765/ in Chrome
 2. Click **Start** and allow microphone access
-3. Speak — you should hear your voice echoed back
-4. RTT display should show < 200ms average
+3. Speak — the bot responds with voice
+4. Interrupt mid-sentence to test barge-in
 5. Click **Stop** to end the session
 
-### Run automated tests
-```bash
-poetry run pytest test/test_echo_server.py -v
+## Project Structure
+
+```
+src/
+├── server.py              # WebSocket server, event queue, pipeline orchestration
+├── state_machine.py       # State transitions + latency markers
+├── deepgram_client.py     # Deepgram Flux v2 STT wrapper
+├── llm_orchestrator.py    # Dual-layer Claude (Haiku filler + Sonnet full)
+├── prompts.py             # System prompts (cached across turns)
+├── sentence_splitter.py   # Streaming sentence boundary detection
+├── tts_client.py          # Cartesia Sonic 3 TTS wrapper
+├── vad_detector.py        # Silero VAD v5 ONNX wrapper
+├── latency_logger.py      # JSONL latency logging
+├── audio_config.py        # Audio format constants
+├── audio_sources.py       # File + microphone audio input
+└── static/
+    └── index.html         # Browser client (AudioWorklet + Web Audio)
+
+test/
+├── test_echo_server.py        # WebSocket echo + HTTP serving
+├── test_sentence_splitter.py  # 21 sentence splitting tests
+├── test_state_machine_sim.py  # 25 state transition tests (incl. barge-in)
+├── test_vad_detector.py       # 6 VAD unit tests
+├── test_barge_in.py           # 6 barge-in integration tests
+└── ...                        # API validation + component tests
 ```
 
-Tests verify: echo round-trip (bytes identical, RTT < 200ms), ping/pong latency (< 100ms), 100-chunk ordering, interleaved binary/text frames, HTTP serving, and JSONL log output with IDLE → USER_SPEAKING state transition.
-
-## Phase 1 API Validation
-
-Test all API integrations:
+## Running Tests
 
 ```bash
-# Test with file-based streaming (default)
-python test/phase1_api_validation.py --mode=file
+# All tests
+poetry run pytest -v
 
-# Test with real-time microphone
-python test/phase1_api_validation.py --mode=mic
-
-# Test both modes
-python test/phase1_api_validation.py --mode=both
+# Specific test files
+poetry run pytest test/test_sentence_splitter.py -v
+poetry run pytest test/test_state_machine_sim.py -v
+poetry run pytest test/test_vad_detector.py -v
+poetry run pytest test/test_barge_in.py -v
 ```
 
-## Test Audio Generation
+62 tests, all passing.
 
-Generate test audio files using Cartesia TTS:
+## Platform Notes
 
-```bash
-python test/create_test_audio.py
-```
-
-This creates a 16-bit PCM WAV file at `assets/audio/fixtures/test_audio.wav`.
-
-## Dependencies
-
-VoiceBuddy uses Poetry for dependency management (no `requirements.txt`; use `poetry install`).
-
-Environment setup:
-```bash
-cp .env.example .env
-# then edit .env with your real API keys; audio defaults are pre-filled
-```
-
-Pre-commit (format/lint):
-```bash
-poetry run pre-commit install
-poetry run pre-commit run --all-files
-```
-Formatting standards: Black + isort, line length 120.
-
-### Installation
-
-```bash
-# Install Poetry (if not already installed)
-curl -sSL https://install.python-poetry.org | python3 -
-
-# Install dependencies
-poetry install
-
-# Or install without dev dependencies (production)
-poetry install --only main
-```
-
-### Running Tests
-
-```bash
-# Test all API integrations (file mode)
-poetry run python test/phase1_api_validation.py --mode=file
-
-# Test with real-time microphone
-poetry run python test/phase1_api_validation.py --mode=mic
-
-# Test both modes
-poetry run python test/phase1_api_validation.py --mode=both
-```
-
-### Platform-Specific Notes
 - **macOS**: All dependencies work out of the box
 - **Linux**: Install libportaudio2 first: `sudo apt-get install libportaudio2`
 - **Windows**: Should work without additional setup
