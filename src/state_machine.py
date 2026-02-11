@@ -73,7 +73,8 @@ class StateMachine:
             (State.FILLER_RESPONSE, Event.BARGE_IN_DETECTED): State.BARGE_IN_DETECTED,
             # G2: filler playback finishes but Sonnet not back yet — stay in FILLER_RESPONSE
             (State.FILLER_RESPONSE, Event.TTS_PLAYBACK_DONE): State.FILLER_RESPONSE,
-            # G1: TTS_AUDIO_READY while already speaking — self-loop for marker recording
+            # G1: TTS_AUDIO_READY while already speaking/processing — self-loop for marker recording
+            (State.PROCESSING, Event.TTS_AUDIO_READY): State.PROCESSING,
             (State.BOT_SPEAKING, Event.TTS_AUDIO_READY): State.BOT_SPEAKING,
             (State.FILLER_RESPONSE, Event.TTS_AUDIO_READY): State.FILLER_RESPONSE,
             # G3: false barge-in with no follow-up speech — escape to IDLE

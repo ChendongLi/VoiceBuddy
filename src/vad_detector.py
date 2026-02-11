@@ -85,7 +85,7 @@ class VADDetector:
 
             if not self._is_speaking and self._speech_ms >= self._min_speech_ms:
                 self._is_speaking = True
-                logger.debug("VAD speech start (prob=%.2f)", prob)
+                logger.info("VAD speech start (prob=%.2f)", prob)
                 self._on_speech_start()
         else:
             self._silence_ms += _WINDOW_MS
@@ -93,5 +93,5 @@ class VADDetector:
 
             if self._is_speaking and self._silence_ms >= self._min_silence_ms:
                 self._is_speaking = False
-                logger.debug("VAD speech end (prob=%.2f)", prob)
+                logger.info("VAD speech end (prob=%.2f)", prob)
                 self._on_speech_end()

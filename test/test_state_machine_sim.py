@@ -91,6 +91,25 @@ def test_tts_audio_ready_self_loop(tmp_path: Path):
     assert sm.current_state == State.IDLE
 
 
+def test_tts_audio_ready_during_processing_self_loop(tmp_path: Path):
+    """TTS_AUDIO_READY in PROCESSING — self-loop (Sonnet streams fast, TTS fires before filler)."""
+    sm = make_sm(tmp_path)
+    sm.handle(Event.START_OF_TURN)
+    sm.handle(Event.END_OF_TURN)
+    assert sm.current_state == State.PROCESSING
+
+    # TTS fires while still processing — should not crash
+    sm.handle(Event.TTS_AUDIO_READY)
+    assert sm.current_state == State.PROCESSING
+
+    # Normal flow continues
+    sm.handle(Event.LLM_FULL_READY)
+    assert sm.current_state == State.BOT_SPEAKING
+
+    sm.handle(Event.TTS_PLAYBACK_DONE)
+    assert sm.current_state == State.IDLE
+
+
 # ---------------------------------------------------------------------------
 # Barge-in scenarios
 # ---------------------------------------------------------------------------

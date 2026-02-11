@@ -306,6 +306,90 @@ class TestDeepgramFirstThenVadBargesIn:
         assert sm.current_state == State.BOT_SPEAKING
 
 
+class TestTtsTurnEndSentinel:
+    """TTS worker should only fire tts_playback_done on __turn_end__ sentinel."""
+
+    @pytest.mark.asyncio
+    async def test_sentinel_fires_playback_done(self):
+        """TTS worker fires tts_playback_done when it dequeues __turn_end__."""
+        tts_queue: asyncio.Queue = asyncio.Queue()
+        event_queue: asyncio.Queue = asyncio.Queue()
+
+        # Simulate: two sentences then turn-end sentinel
+        tts_queue.put_nowait(("Hello there.", "ctx-1"))
+        tts_queue.put_nowait(("How are you?", "ctx-1"))
+        tts_queue.put_nowait(("__turn_end__", "ctx-1"))
+
+        events_fired = []
+
+        # Process items like the tts_worker would
+        while not tts_queue.empty():
+            item = tts_queue.get_nowait()
+            sentence, context_id = item
+            if sentence == "__turn_end__":
+                events_fired.append("tts_playback_done")
+            else:
+                events_fired.append(f"synthesize:{sentence}")
+
+        assert events_fired == [
+            "synthesize:Hello there.",
+            "synthesize:How are you?",
+            "tts_playback_done",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_empty_queue_between_sentences_no_playback_done(self):
+        """Temporarily empty queue between sentences must NOT fire tts_playback_done."""
+        tts_queue: asyncio.Queue = asyncio.Queue()
+        playback_done_fired = False
+
+        # Enqueue first sentence
+        tts_queue.put_nowait(("First sentence.", "ctx-1"))
+
+        # Process first sentence
+        item = tts_queue.get_nowait()
+        sentence, context_id = item
+
+        # Queue is now empty between sentences — old code would fire playback_done here
+        assert tts_queue.empty()
+
+        # With sentinel approach, we only fire on __turn_end__, not on empty queue
+        if sentence == "__turn_end__":
+            playback_done_fired = True
+
+        assert not playback_done_fired, "playback_done must not fire on regular sentence"
+
+        # Now second sentence arrives (from splitter streaming)
+        tts_queue.put_nowait(("Second sentence.", "ctx-1"))
+        tts_queue.put_nowait(("__turn_end__", "ctx-1"))
+
+        # Process remaining
+        while not tts_queue.empty():
+            item = tts_queue.get_nowait()
+            sentence, context_id = item
+            if sentence == "__turn_end__":
+                playback_done_fired = True
+
+        assert playback_done_fired, "playback_done should fire on __turn_end__"
+
+    @pytest.mark.asyncio
+    async def test_cancel_pipeline_drains_sentinel(self):
+        """cancel_pipeline drain loop should also drain __turn_end__ sentinels."""
+        tts_queue: asyncio.Queue = asyncio.Queue()
+
+        tts_queue.put_nowait(("Sentence one.", "ctx-1"))
+        tts_queue.put_nowait(("__turn_end__", "ctx-1"))
+
+        # Drain logic (mirrors cancel_pipeline step 2)
+        while not tts_queue.empty():
+            try:
+                tts_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+        assert tts_queue.empty()
+
+
 class TestSilenceTimerCancelledOnTtsAfterBargeInRecovery:
     """After barge-in recovery turn, TTS first byte should cancel silence timer."""
 

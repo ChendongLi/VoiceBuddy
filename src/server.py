@@ -272,6 +272,15 @@ async def handle_connection(websocket):
                         last_vad_speech_start_ms > 0 and (now_ms - last_vad_speech_start_ms) < BARGE_IN_GRACE_MS
                     )
 
+                    logger.info(
+                        "[%s] SOT check: state=%s vad_active=%s vad_recent=%s pending=%s",
+                        session_id[:8],
+                        current.name,
+                        vad_speech_active,
+                        vad_recently_active,
+                        pending_barge_in is not None,
+                    )
+
                     if current in barge_in_states and vad_recently_active:
                         # Real barge-in confirmed by VAD + Deepgram
                         pending_barge_in = None  # Clear any pending
@@ -374,6 +383,8 @@ async def handle_connection(websocket):
                 elif event_type == "llm_full_ready":
                     # Flush remaining sentence from splitter
                     splitter.flush()
+                    # Signal TTS worker: no more sentences for this turn
+                    tts_queue.put_nowait(("__turn_end__", turn_context_id))
 
                     sm.handle(Event.LLM_FULL_READY)
                     full_text = data["text"]
@@ -390,9 +401,6 @@ async def handle_connection(websocket):
 
                     await websocket.send(json.dumps({"type": "response", "text": full_text}))
                     logger.info("[%s] Response: %r", session_id[:8], full_text[:100])
-
-                    # Signal TTS that no more sentences are coming for this turn
-                    # (TTS worker will send playback_done after processing all queued sentences)
 
                 elif event_type == "tts_first_byte":
                     sm.handle(Event.TTS_AUDIO_READY)
@@ -434,6 +442,14 @@ async def handle_connection(websocket):
             if item is None:  # Shutdown sentinel
                 break
             sentence, context_id = item
+
+            # Turn-end sentinel: fire tts_playback_done and wait for next turn
+            if sentence == "__turn_end__":
+                ts_ms = time.time() * 1000
+                event_queue.put_nowait(("tts_playback_done", {"ts_ms": ts_ms}))
+                first_byte_of_turn = True
+                continue
+
             first_byte = True
             tts_cancel_event.clear()
             try:
@@ -455,12 +471,6 @@ async def handle_connection(websocket):
             if tts_cancel_event.is_set():
                 first_byte_of_turn = True
                 continue
-
-            # Check if TTS queue is empty — if so, this turn's audio is done
-            if tts_queue.empty():
-                ts_ms = time.time() * 1000
-                event_queue.put_nowait(("tts_playback_done", {"ts_ms": ts_ms}))
-                first_byte_of_turn = True  # Reset for next turn
 
     tts_task = asyncio.create_task(tts_worker())
 
