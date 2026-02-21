@@ -245,3 +245,37 @@ These are the details that matter when you sit down to write the code. They are 
 **Redis TTL should be set to 10 minutes.** Typical call is 3–5 minutes. 10 minutes gives buffer for slow disconnects and post-call logging without leaving stale sessions in memory.
 
 **ElevenLabs Flash 2.5 is the TTS fallback.** If Cartesia returns an error or times out, route that sentence to ElevenLabs instead. The latency difference (40–90 ms vs 75–100 ms) is acceptable as a fallback. Do not silently drop audio.
+
+---
+
+## 7. Bug Fixes Applied Post-POC Build
+
+### BF-1 — Barge-In Allows Stale LLM Events Through (Fixed)
+**Date:** February 2026
+**File:** `src/server.py`
+
+**Root Cause**
+
+When barge-in fires, `cancel_pipeline()` cancels the in-flight LLM `asyncio.Task`. However, because LLM SDK callbacks are synchronous, they may have already called `on_full_token` and `on_full_ready` before the task had a chance to be cancelled. Those events were already sitting in `event_queue` when `cancel_pipeline()` ran. `asyncio.Task.cancel()` cannot undo already-enqueued callbacks.
+
+This caused:
+1. Stale Sonnet tokens fed through the sentence splitter (even after `splitter.discard()` ran during cancellation).
+2. `splitter.flush()` emitting old sentences into the TTS queue.
+3. A second "Allison" response bubble sent to the browser for the cancelled turn.
+4. Three concurrent audio streams: browser-buffered old audio + stale Sonnet TTS + new Haiku filler.
+
+**Fix: `llm_cancelled` flag**
+
+A single boolean `llm_cancelled` is declared alongside `llm_task`. The flag acts as a lightweight gate that event handlers check before acting on any LLM-sourced event.
+
+| Location | Change |
+|---|---|
+| `llm_task` declaration (line ~129) | `llm_cancelled = False` declared alongside it |
+| `process_events()` nonlocal (line ~229) | `llm_cancelled` added to `nonlocal` list |
+| `cancel_pipeline()` — first line (line ~153) | `llm_cancelled = True` set before draining queues |
+| `end_of_turn` handler before `llm_task` creation | `llm_cancelled = False` reset for the fresh turn |
+| `llm_filler_ready` handler | Entire handler body skipped if `llm_cancelled` |
+| `llm_full_token` handler | `splitter.feed()` skipped if `llm_cancelled` |
+| `llm_full_ready` handler | `splitter.flush()`, TTS enqueue, state transition, WebSocket send all skipped if `llm_cancelled` |
+
+No other files changed. Normal (non-interrupted) conversation flow is unaffected — the flag is `False` during every normal turn.

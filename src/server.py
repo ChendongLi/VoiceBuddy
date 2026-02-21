@@ -126,6 +126,7 @@ async def handle_connection(websocket):
 
     # Cancellation state
     llm_task: asyncio.Task | None = None
+    llm_cancelled = False
     tts_cancel_event = asyncio.Event()
 
     # Silence policy
@@ -148,7 +149,8 @@ async def handle_connection(websocket):
 
     async def cancel_pipeline():
         """Cancel in-flight LLM and TTS on barge-in."""
-        nonlocal llm_task
+        nonlocal llm_task, llm_cancelled
+        llm_cancelled = True
 
         # 0. Log cancellation marker before clearing state
         log.log_latency(
@@ -225,7 +227,7 @@ async def handle_connection(websocket):
     # --- Event processor (background task) ---
 
     async def process_events():
-        nonlocal turn_context_id, vad_speech_active, llm_task, last_vad_speech_start_ms, pending_barge_in
+        nonlocal turn_context_id, vad_speech_active, llm_task, last_vad_speech_start_ms, pending_barge_in, llm_cancelled
         while True:
             event_type, data = await event_queue.get()
             try:
@@ -351,56 +353,63 @@ async def handle_connection(websocket):
                         # Set up context_id for this turn's TTS sentences
                         turn_context_id = f"{session_id[:8]}-{sm.ctx.turn_id}"
                         # Fire LLM processing
+                        llm_cancelled = False
                         llm_task = asyncio.create_task(llm.process_turn(transcript))
                         # Start silence policy timer
                         start_silence_timer()
 
                 elif event_type == "llm_filler_ready":
-                    sm.handle(Event.LLM_FILLER_READY)
-                    cancel_silence_timer()
-                    filler_text = data["text"]
+                    if llm_cancelled:
+                        logger.debug("[%s] Dropping stale llm_filler_ready", session_id[:8])
+                    else:
+                        sm.handle(Event.LLM_FILLER_READY)
+                        cancel_silence_timer()
+                        filler_text = data["text"]
 
-                    # Log Stage 3: filler TTFT
-                    if "user_stopped_speaking" in sm.ctx.markers:
-                        log.log_latency(
-                            session_id,
-                            sm.ctx.turn_id,
-                            "llm_filler_ttft",
-                            data["ttft_ms"],
-                            metadata={"model": "haiku"},
-                        )
+                        # Log Stage 3: filler TTFT
+                        if "user_stopped_speaking" in sm.ctx.markers:
+                            log.log_latency(
+                                session_id,
+                                sm.ctx.turn_id,
+                                "llm_filler_ttft",
+                                data["ttft_ms"],
+                                metadata={"model": "haiku"},
+                            )
 
-                    await websocket.send(json.dumps({"type": "filler", "text": filler_text}))
-                    logger.info("[%s] Filler: %r", session_id[:8], filler_text)
+                        await websocket.send(json.dumps({"type": "filler", "text": filler_text}))
+                        logger.info("[%s] Filler: %r", session_id[:8], filler_text)
 
-                    # Send filler to TTS
-                    tts_queue.put_nowait((filler_text, turn_context_id))
+                        # Send filler to TTS
+                        tts_queue.put_nowait((filler_text, turn_context_id))
 
                 elif event_type == "llm_full_token":
-                    # Stream tokens through sentence splitter
-                    splitter.feed(data["token"])
+                    if not llm_cancelled:
+                        splitter.feed(data["token"])
 
                 elif event_type == "llm_full_ready":
-                    # Flush remaining sentence from splitter
-                    splitter.flush()
-                    # Signal TTS worker: no more sentences for this turn
-                    tts_queue.put_nowait(("__turn_end__", turn_context_id))
+                    if llm_cancelled:
+                        logger.debug("[%s] Dropping stale llm_full_ready", session_id[:8])
+                    else:
+                        # Flush remaining sentence from splitter
+                        splitter.flush()
+                        # Signal TTS worker: no more sentences for this turn
+                        tts_queue.put_nowait(("__turn_end__", turn_context_id))
 
-                    sm.handle(Event.LLM_FULL_READY)
-                    full_text = data["text"]
+                        sm.handle(Event.LLM_FULL_READY)
+                        full_text = data["text"]
 
-                    # Log Stage 3: full response TTFT
-                    if "user_stopped_speaking" in sm.ctx.markers:
-                        log.log_latency(
-                            session_id,
-                            sm.ctx.turn_id,
-                            "llm_full_ttft",
-                            data["ttft_ms"],
-                            metadata={"model": "sonnet"},
-                        )
+                        # Log Stage 3: full response TTFT
+                        if "user_stopped_speaking" in sm.ctx.markers:
+                            log.log_latency(
+                                session_id,
+                                sm.ctx.turn_id,
+                                "llm_full_ttft",
+                                data["ttft_ms"],
+                                metadata={"model": "sonnet"},
+                            )
 
-                    await websocket.send(json.dumps({"type": "response", "text": full_text}))
-                    logger.info("[%s] Response: %r", session_id[:8], full_text[:100])
+                        await websocket.send(json.dumps({"type": "response", "text": full_text}))
+                        logger.info("[%s] Response: %r", session_id[:8], full_text[:100])
 
                 elif event_type == "tts_first_byte":
                     sm.handle(Event.TTS_AUDIO_READY)
