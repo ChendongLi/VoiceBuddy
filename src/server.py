@@ -545,7 +545,7 @@ async def handle_connection(websocket):
         )
 
 
-async def main(host: str = "localhost", port: int = 8765):
+async def main(host: str = "0.0.0.0", port: int = 8765):
     """Start the VoiceBuddy server."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logger.info("Starting VoiceBuddy server on ws://%s:%d", host, port)
