@@ -20,7 +20,7 @@ spec:
         - name: voicebuddy
           image: us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy:latest
           ports:
-            - containerPort: 8080
+            - containerPort: 8765
               protocol: TCP
           resources:
             requests:
@@ -54,14 +54,14 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: 8080
+              port: 8765
             initialDelaySeconds: 10
             periodSeconds: 15
             failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /health
-              port: 8080
+              port: 8765
             initialDelaySeconds: 20
             periodSeconds: 30
             failureThreshold: 3
