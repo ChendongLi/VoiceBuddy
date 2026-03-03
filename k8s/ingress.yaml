@@ -5,6 +5,7 @@ metadata:
   namespace: voicebuddy
   annotations:
     kubernetes.io/ingress.class: "gce"
+    networking.gke.io/managed-certificates: "voicebuddy-cert"
     kubernetes.io/ingress.allow-http: "true"
 spec:
   defaultBackend:
