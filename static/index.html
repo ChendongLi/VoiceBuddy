@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoiceBuddy</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f172a; color: #e2e8f0;
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; min-height: 100vh; padding: 24px; }
+    h1 { font-size: 2rem; margin-bottom: 8px; }
+    p.sub { color: #94a3b8; margin-bottom: 40px; font-size: 0.95rem; }
+    #orb { width: 120px; height: 120px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #6366f1, #1e1b4b);
+      box-shadow: 0 0 40px #6366f155; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 2.5rem; user-select: none; margin-bottom: 32px;
+      transition: transform .15s, box-shadow .15s; }
+    #orb.listening { animation: pulse 1.2s ease-in-out infinite; box-shadow: 0 0 60px #6366f1aa; }
+    #orb.speaking  { box-shadow: 0 0 60px #22c55eaa; background: radial-gradient(circle at 35% 35%, #22c55e, #14532d); }
+    @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+    #status { font-size: 1rem; color: #94a3b8; margin-bottom: 24px; min-height: 24px; }
+    #transcript { background: #1e293b; border-radius: 12px; padding: 16px 20px;
+      width: 100%; max-width: 560px; min-height: 80px;
+      font-size: 0.9rem; line-height: 1.8; color: #cbd5e1; }
+    .you  { color: #818cf8; font-weight: 600; }
+    .sara { color: #34d399; font-weight: 600; }
+    .row  { display: flex; gap: 12px; margin-bottom: 32px; }
+    button { padding: 10px 24px; border-radius: 8px; border: none;
+      font-size: 0.9rem; cursor: pointer; font-weight: 600; }
+    #btnStart { background: #6366f1; color: #fff; }
+    #btnStop  { background: #374151; color: #9ca3af; }
+    button:disabled { opacity: .4; cursor: default; }
+  </style>
+</head>
+<body>
+  <h1>VoiceBuddy</h1>
+  <p class="sub">Cool Breeze HVAC · AI Receptionist</p>
+  <div id="orb">🎙️</div>
+  <div id="status">Click Start to begin</div>
+  <div class="row">
+    <button id="btnStart">▶ Start</button>
+    <button id="btnStop" disabled>■ Stop</button>
+  </div>
+  <div id="transcript"><em style="color:#475569">Conversation will appear here...</em></div>
+  <script>
+    const WS_URL = `ws://${location.host}/ws/voice`;
+    const SAMPLE_RATE = 16000;
+    let ws, audioCtx, workletNode, source, stream;
+    const orb = document.getElementById('orb');
+    const status = document.getElementById('status');
+    const transcript = document.getElementById('transcript');
+    const btnStart = document.getElementById('btnStart');
+    const btnStop = document.getElementById('btnStop');
+
+    const workletSrc = `
+class PCMProcessor extends AudioWorkletProcessor {
+  process(inputs) {
+    const ch = inputs[0][0];
+    if (ch) this.port.postMessage(ch);
+    return true;
+  }
+}
+registerProcessor('pcm-processor', PCMProcessor);
+`;
+
+    function log(who, text) {
+      if (transcript.querySelector('em')) transcript.innerHTML = '';
+      const p = document.createElement('p');
+      p.innerHTML = `<span class="${who}">${who==='you'?'You':'Sara'}:</span> ${text}`;
+      transcript.appendChild(p);
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+    function setStatus(msg, state) {
+      status.textContent = msg;
+      orb.className = state||'';
+      orb.textContent = state==='speaking' ? '🔊' : '🎙️';
+    }
+
+    async function start() {
+      btnStart.disabled = true; btnStop.disabled = false;
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error('Microphone requires HTTPS or localhost (not plain HTTP over a network IP)');
+        }
+        // No sampleRate constraint — AudioContext handles resampling to 16kHz
+        // echoCancellation ON: prevents Sara's TTS audio from being re-transcribed by Deepgram
+        stream = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true},video:false});
+        audioCtx = new AudioContext({sampleRate: SAMPLE_RATE});
+        source = audioCtx.createMediaStreamSource(stream);
+
+        const blob = new Blob([workletSrc], {type: 'application/javascript'});
+        const blobURL = URL.createObjectURL(blob);
+        await audioCtx.audioWorklet.addModule(blobURL);
+        URL.revokeObjectURL(blobURL);
+
+        workletNode = new AudioWorkletNode(audioCtx, 'pcm-processor');
+        workletNode.port.onmessage = (e) => {
+          // Don't send mic audio while Sara is speaking — prevents echo feedback loop
+          if (ws.readyState !== WebSocket.OPEN || playing) return;
+          const f32 = e.data;
+          const i16 = new Int16Array(f32.length);
+          for (let i = 0; i < f32.length; i++)
+            i16[i] = Math.max(-32768, Math.min(32767, f32[i] * 32767));
+          ws.send(i16.buffer);
+        };
+
+        ws = new WebSocket(WS_URL);
+        ws.binaryType = 'arraybuffer';
+        ws.onopen = () => {
+          setStatus('Listening... speak now', 'listening');
+          source.connect(workletNode);
+          // workletNode is NOT connected to destination — mic audio must not play through speakers
+        };
+        ws.onclose = () => setStatus('Disconnected', '');
+        ws.onerror = () => setStatus('Connection error', '');
+
+        let queue = [], playing = false;
+        async function playNext() {
+          if (playing || queue.length === 0) return;
+          if (audioCtx.state === 'suspended') await audioCtx.resume();
+          playing = true; setStatus('Sara is speaking...', 'speaking');
+          const pcm = queue.shift();
+          const f32 = new Float32Array(pcm.length);
+          for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32767;
+          const buf = audioCtx.createBuffer(1, f32.length, SAMPLE_RATE);
+          buf.copyToChannel(f32, 0);
+          const src = audioCtx.createBufferSource();
+          src.buffer = buf; src.connect(audioCtx.destination);
+          src.onended = () => { playing = false; queue.length > 0 ? playNext() : setStatus('Listening... speak now', 'listening'); };
+          src.start();
+        }
+        ws.onmessage = (e) => {
+          if (e.data instanceof ArrayBuffer) { queue.push(new Int16Array(e.data)); playNext(); }
+          else {
+            try {
+              const m = JSON.parse(e.data);
+              if (m.transcript) log('you', m.transcript);
+              if (m.filler) setStatus('Sara: ' + m.filler, 'speaking');
+              if (m.response) log('sara', m.response);
+              if (m.error) setStatus('Error: ' + m.error, '');
+            } catch {}
+          }
+        };
+      } catch (err) {
+        setStatus('Mic error: ' + err.message, '');
+        btnStart.disabled = false; btnStop.disabled = true;
+      }
+    }
+
+    function stop() {
+      ws?.close(); workletNode?.disconnect(); source?.disconnect();
+      stream?.getTracks().forEach(t => t.stop()); audioCtx?.close();
+      btnStart.disabled = false; btnStop.disabled = true; setStatus('Stopped', '');
+    }
+    btnStart.onclick = start; btnStop.onclick = stop;
+  </script>
+</body>
+</html>

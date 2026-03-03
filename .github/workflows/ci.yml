@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint-and-import-check:
+    name: Lint & Import Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: server/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r server/requirements.txt
+
+      - name: Verify server app imports successfully
+        run: python -c "from server.main import app; print('Import OK')"
+        env:
+          # Provide dummy keys so config validation doesn't fail at import time
+          DEEPGRAM_API_KEY: "test"
+          CLAUDE_API_KEY: "test"
+          CARTESIA_API_KEY: "test"
+          CARTESIA_VOICE_ID: "a0e99841-438c-4a64-b679-ae501e7d6091"
+
+      - name: Verify pipeline imports successfully
+        run: python -c "from server.pipeline import VoicePipeline; print('Pipeline import OK')"
+        env:
+          DEEPGRAM_API_KEY: "test"
+          CLAUDE_API_KEY: "test"
+          CARTESIA_API_KEY: "test"
+
+      - name: Verify config imports successfully
+        run: python -c "from server.config import HOST, PORT, AUDIO_SAMPLE_RATE; print(f'Config OK — {HOST}:{PORT}')"
+
+  # Deploy is handled by Cloud Build on push to main.
+  # This job is intentionally left as a stub comment.
+  # deploy:
+  #   Cloud Build trigger: push to main → cloudbuild.yaml

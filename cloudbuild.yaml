@@ -1,0 +1,58 @@
+steps:
+  # Step 1: Build Docker image
+  - name: "gcr.io/cloud-builders/docker"
+    id: "build"
+    args:
+      - build
+      - "-t"
+      - "us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy:$COMMIT_SHA"
+      - "-t"
+      - "us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy:latest"
+      - "."
+
+  # Step 2: Push image to Artifact Registry
+  - name: "gcr.io/cloud-builders/docker"
+    id: "push"
+    waitFor: ["build"]
+    args:
+      - push
+      - "--all-tags"
+      - "us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy"
+
+  # Step 3: Apply all k8s manifests (namespace, secrets refs, service, ingress, hpa)
+  - name: "gcr.io/cloud-builders/kubectl"
+    id: "apply-manifests"
+    waitFor: ["push"]
+    args:
+      - apply
+      - "-f"
+      - "k8s/"
+      - "--namespace"
+      - "voicebuddy"
+    env:
+      - "CLOUDSDK_COMPUTE_REGION=us-west1"
+      - "CLOUDSDK_CONTAINER_CLUSTER=voicebuddy-cluster"
+
+  # Step 4: Roll out new image to the deployment
+  - name: "gcr.io/cloud-builders/kubectl"
+    id: "rollout"
+    waitFor: ["apply-manifests"]
+    args:
+      - set
+      - image
+      - "deployment/voicebuddy"
+      - "voicebuddy=us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy:$COMMIT_SHA"
+      - "--namespace"
+      - "voicebuddy"
+    env:
+      - "CLOUDSDK_COMPUTE_REGION=us-west1"
+      - "CLOUDSDK_CONTAINER_CLUSTER=voicebuddy-cluster"
+
+images:
+  - "us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy:$COMMIT_SHA"
+  - "us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+# Trigger on push to main branch (configured in Cloud Build trigger settings)
