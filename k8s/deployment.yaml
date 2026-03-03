@@ -52,17 +52,15 @@ spec:
                   key: CARTESIA_VOICE_ID
                   optional: true
           readinessProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: 8765
-            initialDelaySeconds: 10
+            initialDelaySeconds: 15
             periodSeconds: 15
             failureThreshold: 3
           livenessProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: 8765
-            initialDelaySeconds: 20
+            initialDelaySeconds: 30
             periodSeconds: 30
             failureThreshold: 3
           lifecycle:
