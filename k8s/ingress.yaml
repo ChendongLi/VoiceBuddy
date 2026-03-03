@@ -8,8 +8,14 @@ metadata:
     networking.gke.io/managed-certificates: "voicebuddy-cert"
     kubernetes.io/ingress.allow-http: "true"
 spec:
-  defaultBackend:
-    service:
-      name: voicebuddy-service
-      port:
-        number: 80
+  rules:
+  - host: voicebuddy.agentlens.net
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: voicebuddy-service
+            port:
+              number: 80
