@@ -4,32 +4,11 @@ metadata:
   name: voicebuddy-ingress
   namespace: voicebuddy
   annotations:
-    # GKE managed ingress (external HTTP(S) load balancer)
     kubernetes.io/ingress.class: "gce"
-    # Allow large request bodies (for audio upload if needed)
-    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
-    # WebSocket support — keep connections alive longer
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-    # WebSocket upgrade headers
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      proxy_set_header Upgrade $http_upgrade;
-      proxy_set_header Connection "upgrade";
+    kubernetes.io/ingress.allow-http: "true"
 spec:
-  rules:
-    - http:
-        paths:
-          - path: /ws
-            pathType: Prefix
-            backend:
-              service:
-                name: voicebuddy-service
-                port:
-                  number: 8080
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: voicebuddy-service
-                port:
-                  number: 8080
+  defaultBackend:
+    service:
+      name: voicebuddy-service
+      port:
+        number: 80

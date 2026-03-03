@@ -3,14 +3,12 @@ kind: Service
 metadata:
   name: voicebuddy-service
   namespace: voicebuddy
-  labels:
-    app: voicebuddy
 spec:
-  type: ClusterIP
   selector:
     app: voicebuddy
+  type: NodePort
   ports:
     - name: http
       protocol: TCP
-      port: 8765
+      port: 80
       targetPort: 8765
