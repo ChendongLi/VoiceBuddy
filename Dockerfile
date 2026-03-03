@@ -4,11 +4,9 @@ RUN groupadd --system app && useradd --system --gid app app
 
 WORKDIR /app
 
-# Install dependencies
-COPY pyproject.toml poetry.lock ./
-RUN pip install --no-cache-dir poetry && \
-    poetry config virtualenvs.create false && \
-    poetry install --no-interaction --no-ansi --only main
+# Install only server dependencies (no torch/ML deps)
+COPY requirements-server.txt .
+RUN pip install --no-cache-dir -r requirements-server.txt
 
 # Copy source
 COPY src/ ./src/
