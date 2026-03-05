@@ -11,6 +11,12 @@ RUN pip install --no-cache-dir \
 
 COPY src/ ./src/
 
+# Create logs dir owned by app user so LatencyLogger can write to it
+RUN mkdir -p /app/logs && chown app:app /app/logs
+
+# Pre-warm Silero VAD model so first connection isn't cold
+RUN python -c "from silero_vad import load_silero_vad; load_silero_vad(onnx=True); print('VAD model pre-loaded')"
+
 USER app
 EXPOSE 8765
 CMD ["python", "src/server.py"]

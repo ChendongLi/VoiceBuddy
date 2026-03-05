@@ -555,6 +555,18 @@ async def main(host: str = "0.0.0.0", port: int = 8765):
     logger.info("Starting VoiceBuddy server on ws://%s:%d", host, port)
     logger.info("Open http://%s:%d/ in your browser", host, port)
 
+    # Pre-warm Silero VAD model so the first WebSocket connection doesn't pay
+    # the ONNX session-creation cost. Each VADDetector still gets its own
+    # instance (isolated LSTM state), but the ONNX runtime caches the session
+    # factory after this initial load, making subsequent instantiations fast.
+    try:
+        from silero_vad import load_silero_vad as _load_vad
+        logger.info("Pre-loading Silero VAD model...")
+        _load_vad(onnx=True)
+        logger.info("Silero VAD model pre-loaded OK")
+    except Exception as _e:
+        logger.warning("VAD pre-load failed (non-fatal): %s", _e)
+
     async with serve(handle_connection, host, port, process_request=process_request) as server:
         await server.serve_forever()
 
