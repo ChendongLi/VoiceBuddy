@@ -3,6 +3,8 @@ kind: Service
 metadata:
   name: voicebuddy-service
   namespace: voicebuddy
+  annotations:
+    cloud.google.com/backend-config: '{"default": "voicebuddy-backend-config"}'
 spec:
   selector:
     app: voicebuddy
