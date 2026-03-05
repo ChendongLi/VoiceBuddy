@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: voicebuddy
+  namespace: voicebuddy
+  labels:
+    app: voicebuddy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: voicebuddy
+  template:
+    metadata:
+      labels:
+        app: voicebuddy
+    spec:
+      serviceAccountName: voicebuddy-sa
+      containers:
+        - name: voicebuddy
+          image: us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy:latest
+          ports:
+            - containerPort: 8765
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          env:
+            - name: DEEPGRAM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: voicebuddy-secrets
+                  key: DEEPGRAM_API_KEY
+            - name: CLAUDE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: voicebuddy-secrets
+                  key: CLAUDE_API_KEY
+            - name: CARTESIA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: voicebuddy-secrets
+                  key: CARTESIA_API_KEY
+            - name: CARTESIA_VOICE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: voicebuddy-secrets
+                  key: CARTESIA_VOICE_ID
+                  optional: true
+          readinessProbe:
+            tcpSocket:
+              port: 8765
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: 8765
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+      terminationGracePeriodSeconds: 30

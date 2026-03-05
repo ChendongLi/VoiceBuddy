@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: voicebuddy-service
+  namespace: voicebuddy
+spec:
+  selector:
+    app: voicebuddy
+  type: NodePort
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 8765

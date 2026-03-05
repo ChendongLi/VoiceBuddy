@@ -44,7 +44,11 @@ HTML_CONTENT = _load_html()
 
 
 def process_request(connection, request):
-    """Serve index.html on GET /; allow WS upgrade on /ws; 404 otherwise."""
+    """Serve index.html on GET /; /health for probes; allow WS upgrade on /ws; 404 otherwise."""
+    if request.path == "/health":
+        response = connection.respond(HTTPStatus.OK, '{"status":"ok"}')
+        response.headers["Content-Type"] = "application/json"
+        return response
     if request.path == "/":
         response = connection.respond(HTTPStatus.OK, HTML_CONTENT)
         response.headers["Content-Type"] = "text/html; charset=utf-8"
@@ -545,7 +549,7 @@ async def handle_connection(websocket):
         )
 
 
-async def main(host: str = "localhost", port: int = 8765):
+async def main(host: str = "0.0.0.0", port: int = 8765):
     """Start the VoiceBuddy server."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logger.info("Starting VoiceBuddy server on ws://%s:%d", host, port)
