@@ -30,8 +30,8 @@ steps:
       - "--namespace"
       - "voicebuddy"
     env:
-      - "CLOUDSDK_COMPUTE_REGION=us-west1"
-      - "CLOUDSDK_CONTAINER_CLUSTER=voicebuddy-cluster"
+      - "CLOUDSDK_COMPUTE_ZONE=us-west1-b"
+      - "CLOUDSDK_CONTAINER_CLUSTER=voicebuddy-standard"
 
   # Step 4: Roll out new image to the deployment
   - name: "gcr.io/cloud-builders/kubectl"
@@ -45,8 +45,8 @@ steps:
       - "--namespace"
       - "voicebuddy"
     env:
-      - "CLOUDSDK_COMPUTE_REGION=us-west1"
-      - "CLOUDSDK_CONTAINER_CLUSTER=voicebuddy-cluster"
+      - "CLOUDSDK_COMPUTE_ZONE=us-west1-b"
+      - "CLOUDSDK_CONTAINER_CLUSTER=voicebuddy-standard"
 
 images:
   - "us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy:$COMMIT_SHA"
