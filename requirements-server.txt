@@ -1,10 +1,11 @@
-websockets>=12.0
+websockets>=16.0
 deepgram-sdk>=5.0.0
-anthropic>=0.28.0
-cartesia>=1.0.0
+anthropic>=0.77.0
+cartesia>=2.0.17
 python-dotenv>=1.0.0
 httpx>=0.27.0
 numpy>=1.24.0
 silero-vad>=5.1
+onnxruntime>=1.16
 torch==2.1.2+cpu
 torchaudio==2.1.2+cpu
