@@ -55,7 +55,7 @@ def process_request(connection, request):
         response = connection.respond(HTTPStatus.OK, HTML_CONTENT)
         response.headers["Content-Type"] = "text/html; charset=utf-8"
         return response
-    if request.path == "/ws":
+    if request.path == "/ws" or request.path.startswith("/ws?"):
         return None  # proceed with WebSocket upgrade
     return connection.respond(HTTPStatus.NOT_FOUND, "Not Found")
 
