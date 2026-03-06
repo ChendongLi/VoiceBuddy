@@ -9,9 +9,9 @@ Provides a unified interface for streaming audio from different sources:
 import asyncio
 import wave
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from pathlib import Path
 from queue import Queue
-from typing import AsyncIterator
 
 try:
     import sounddevice as sd

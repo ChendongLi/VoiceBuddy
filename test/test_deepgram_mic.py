@@ -22,13 +22,13 @@ from dotenv import load_dotenv
 # os.getenv("DEEPGRAM_API_KEY") once at import time as a default parameter.
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from deepgram import AsyncDeepgramClient
-from deepgram.core.events import EventType
-from deepgram.extensions.types.sockets import ListenV2SocketClientResponse
+from deepgram import AsyncDeepgramClient  # noqa: E402
+from deepgram.core.events import EventType  # noqa: E402
+from deepgram.extensions.types.sockets import ListenV2SocketClientResponse  # noqa: E402
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from audio_sources import MicrophoneAudioSource
+from audio_sources import MicrophoneAudioSource  # noqa: E402
 
 
 class Colors:

@@ -30,9 +30,9 @@ class TTSClient:
         "encoding": "pcm_s16le",
     }
 
-    def __init__(self):
+    def __init__(self, voice_id: str | None = None):
         self._api_key = os.environ.get("CARTESIA_API_KEY")
-        self._voice_id = os.environ.get("CARTESIA_VOICE_ID")
+        self._voice_id = voice_id or os.environ.get("CARTESIA_VOICE_ID")
         self._client = AsyncCartesia(api_key=self._api_key)
         self._ws = None
         self._current_context_id = None

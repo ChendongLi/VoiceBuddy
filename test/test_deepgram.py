@@ -1,14 +1,13 @@
 import asyncio
-import subprocess
 
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
 
-from deepgram import AsyncDeepgramClient
-from deepgram.core.events import EventType
-from deepgram.extensions.types.sockets import ListenV2SocketClientResponse
+from deepgram import AsyncDeepgramClient  # noqa: E402
+from deepgram.core.events import EventType  # noqa: E402
+from deepgram.extensions.types.sockets import ListenV2SocketClientResponse  # noqa: E402
 
 # URL for the realtime streaming audio to transcribe
 STREAM_URL = "http://stream.live.vc.bbcmedia.co.uk/bbc_world_service"
@@ -47,7 +46,6 @@ async def main():
         async with client.listen.v2.connect(
             model="flux-general-en", encoding="linear16", sample_rate="16000"
         ) as connection:
-
             # Define message handler function
             def on_message(message: ListenV2SocketClientResponse) -> None:
                 msg_type = getattr(message, "type", "Unknown")
@@ -65,7 +63,7 @@ async def main():
                         words_info = " | ".join(colored_words)
                         print(f"   📝 {words_info}")
                 elif msg_type == "Connected":
-                    print(f"✅ Connected to Deepgram Flux - Ready for audio!")
+                    print("✅ Connected to Deepgram Flux - Ready for audio!")
 
             # Set up event handlers
             connection.on(EventType.OPEN, lambda _: print("Connection opened"))
@@ -99,7 +97,7 @@ async def main():
                     *ffmpeg_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
 
-                print(f"✅ Audio conversion started (BBC → linear16 PCM)")
+                print("✅ Audio conversion started (BBC → linear16 PCM)")
 
                 # Read converted PCM data and send to Deepgram
                 # Note: 1024 bytes = ~32ms of audio at 16kHz linear16
@@ -123,7 +121,7 @@ async def main():
             # Wait for Deepgram task to complete (or cancel after timeout)
             try:
                 await asyncio.wait_for(deepgram_task, timeout=60)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 print("Stream timeout after 60 seconds")
                 deepgram_task.cancel()
 

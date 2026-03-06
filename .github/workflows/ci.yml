@@ -6,44 +6,133 @@ on:
   push:
     branches: [main]
 
+# Cancel in-flight runs for the same branch/PR so pushes don't queue up.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  lint-and-import-check:
-    name: Lint & Import Check
+  # ---------------------------------------------------------------------------
+  # Job 1 — Lint  (~30s)
+  # Checks formatting and code quality with ruff.
+  # Runs independently; no app dependencies needed.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff==0.8.0
+
+      - name: Check formatting
+        run: ruff format --check src/ test/
+
+      - name: Check lint rules
+        run: ruff check src/ test/
+
+  # ---------------------------------------------------------------------------
+  # Job 2 — Unit tests  (~2 min)
+  # Runs the pure unit test suite — no torch, no Deepgram, no real API calls.
+  # Deps are intentionally minimal so this job stays fast.
+  # ---------------------------------------------------------------------------
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: server/requirements.txt
+          cache-dependency-path: requirements-server.txt
 
-      - name: Install dependencies
-        run: pip install -r server/requirements.txt
+      - name: Install test dependencies
+        # Install only what the pure unit tests actually import.
+        # Heavy deps (torch, silero-vad, onnxruntime) are intentionally excluded.
+        run: |
+          pip install \
+            pytest==8.4.2 \
+            pytest-asyncio==0.23.8 \
+            cartesia>=2.0.17 \
+            python-dotenv>=1.0.0
 
-      - name: Verify server app imports successfully
-        run: python -c "from server.main import app; print('Import OK')"
+      - name: Run unit tests
+        run: |
+          pytest \
+            test/test_sentence_splitter.py \
+            test/test_state_machine_sim.py \
+            test/test_logger.py \
+            test/test_tts_client.py \
+            test/test_voice_routing.py \
+            -v --tb=short
         env:
-          # Provide dummy keys so config validation doesn't fail at import time
+          # Dummy values — load_dotenv reads these at import time.
+          # Real keys are never needed for pure unit tests.
+          CARTESIA_API_KEY: "test"
+          CARTESIA_VOICE_ID: "00000000-0000-0000-0000-000000000000"
           DEEPGRAM_API_KEY: "test"
           CLAUDE_API_KEY: "test"
-          CARTESIA_API_KEY: "test"
-          CARTESIA_VOICE_ID: "a0e99841-438c-4a64-b679-ae501e7d6091"
 
-      - name: Verify pipeline imports successfully
-        run: python -c "from server.pipeline import VoicePipeline; print('Pipeline import OK')"
-        env:
-          DEEPGRAM_API_KEY: "test"
-          CLAUDE_API_KEY: "test"
-          CARTESIA_API_KEY: "test"
+  # ---------------------------------------------------------------------------
+  # Job 3 — Docker build  (~5-8 min, cached after first run)
+  # Builds the production Docker image without pushing it.
+  # Catches broken Dockerfiles, bad requirements, and import errors at startup.
+  # Uses GitHub Actions layer cache so PyTorch (~200 MB) is only downloaded once.
+  # ---------------------------------------------------------------------------
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
 
-      - name: Verify config imports successfully
-        run: python -c "from server.config import HOST, PORT, AUDIO_SAMPLE_RATE; print(f'Config OK — {HOST}:{PORT}')"
+    steps:
+      - uses: actions/checkout@v4
 
-  # Deploy is handled by Cloud Build on push to main.
-  # This job is intentionally left as a stub comment.
-  # deploy:
-  #   Cloud Build trigger: push to main → cloudbuild.yaml
+      # Enable BuildKit with better layer-caching support.
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          # GHA cache keeps PyTorch layers warm across runs.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Smoke-test: run the startup command and make sure all imports resolve.
+      # The server exits immediately (no real API keys) but the import chain
+      # must complete without ModuleNotFoundError or SyntaxError.
+      - name: Smoke-test server imports
+        run: |
+          docker build -t voicebuddy:ci .
+          docker run --rm \
+            -e CARTESIA_API_KEY=test \
+            -e CARTESIA_VOICE_ID=00000000-0000-0000-0000-000000000000 \
+            -e DEEPGRAM_API_KEY=test \
+            -e CLAUDE_API_KEY=test \
+            voicebuddy:ci \
+            python -c "
+          import sys
+          sys.path.insert(0, 'src')
+          from voice_config import VOICE_IDS, resolve_voice_id
+          from tts_client import TTSClient
+          from latency_logger import LatencyLogger
+          from state_machine import StateMachine, Event, State
+          from sentence_splitter import SentenceSplitter
+          assert 'allison' in VOICE_IDS, 'allison not in VOICE_IDS'
+          assert 'don' in VOICE_IDS, 'don not in VOICE_IDS'
+          print('All imports OK — voice registry:', list(VOICE_IDS.keys()))
+          "
+
+# ---------------------------------------------------------------------------
+# CD is handled by Cloud Build on push to main (cloudbuild.yaml).
+# This workflow is intentionally CI-only; it never pushes images.
+# ---------------------------------------------------------------------------

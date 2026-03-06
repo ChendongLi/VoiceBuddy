@@ -29,7 +29,7 @@ def generate_test_audio():
     env_path = Path(__file__).parent.parent / ".env"
     env_vars = {}
 
-    with open(env_path, "r") as f:
+    with open(env_path) as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#"):
@@ -82,11 +82,11 @@ def generate_test_audio():
         num_samples = audio_bytes // (audio_config.channels * audio_config.sample_width)
         duration = num_samples / audio_config.sample_rate
 
-        print(f"\n✅ Test audio fixture created successfully!")
+        print("\n✅ Test audio fixture created successfully!")
         print(f"   Output: {output_path}")
         print(f"   Size: {file_size:,} bytes")
         print(f"   Duration: ~{duration:.1f} seconds")
-        print(f"   Format: 16kHz, mono, 16-bit PCM WAV")
+        print("   Format: 16kHz, mono, 16-bit PCM WAV")
 
     except Exception as e:
         print(f"❌ Error generating test audio: {e}")

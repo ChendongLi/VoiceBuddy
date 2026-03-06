@@ -19,6 +19,8 @@ from pathlib import Path
 
 from websockets.asyncio.server import serve
 
+from voice_config import resolve_voice_id
+
 # Make src importable when running as `python src/server.py`
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -61,7 +63,10 @@ def process_request(connection, request):
 async def handle_connection(websocket):
     """Handle a single WebSocket connection with the full STT → LLM → TTS pipeline."""
     remote = websocket.remote_address
-    logger.info("Client connected: %s", remote)
+
+    # Resolve voice ID from ?voice= query param (e.g. /ws?voice=allison)
+    voice_id = resolve_voice_id(websocket.request.path)
+    logger.info("Client connected: %s (voice=%s)", remote, voice_id)
 
     log = LatencyLogger()
     sm = StateMachine(log)
@@ -119,7 +124,7 @@ async def handle_connection(websocket):
     llm.on_full_ready = on_full_ready
     llm.on_full_token = on_full_token
 
-    tts = TTSClient()
+    tts = TTSClient(voice_id=voice_id)
     vad = VADDetector(on_speech_start=on_vad_speech_start, on_speech_end=on_vad_speech_end)
     vad_speech_active = False
 
@@ -561,6 +566,7 @@ async def main(host: str = "0.0.0.0", port: int = 8765):
     # factory after this initial load, making subsequent instantiations fast.
     try:
         from silero_vad import load_silero_vad as _load_vad
+
         logger.info("Pre-loading Silero VAD model...")
         _load_vad(onnx=True)
         logger.info("Silero VAD model pre-loaded OK")

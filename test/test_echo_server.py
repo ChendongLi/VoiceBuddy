@@ -111,7 +111,7 @@ async def test_multiple_chunks():
 
             assert len(received) == num_chunks
 
-            for i, (sent, got) in enumerate(zip(sent_chunks, received)):
+            for i, (sent, got) in enumerate(zip(sent_chunks, received, strict=False)):
                 assert got == sent, f"Chunk {i} mismatch"
 
             print(f"All {num_chunks} chunks echoed correctly in order")

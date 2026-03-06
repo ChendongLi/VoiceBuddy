@@ -216,7 +216,7 @@ def run(log_path: Path = Path("logs/state_machine_demo.jsonl")) -> None:
     print(f"Scenarios run:      {scenarios_passed}")
     print(f"Transitions fired:  {total_transitions}")
     print(f"Unique transitions: {len(all_fired)}")
-    print(f"All passed.")
+    print("All passed.")
     print(f"Log written to {log_path}")
 
 
