@@ -40,7 +40,7 @@ async def test_mic():
             if elapsed >= timeout:
                 break
 
-        print(f"\n✅ Microphone test successful!")
+        print("\n✅ Microphone test successful!")
         print(f"   Chunks received: {chunks_received}")
         print(f"   Total bytes: {total_bytes:,}")
         print(f"   Duration: {timeout}s")

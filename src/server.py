@@ -16,9 +16,10 @@ import sys
 import time
 from http import HTTPStatus
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 
 from websockets.asyncio.server import serve
+
+from voice_config import resolve_voice_id
 
 # Make src importable when running as `python src/server.py`
 sys.path.insert(0, str(Path(__file__).parent))
@@ -34,12 +35,6 @@ from vad_detector import VADDetector
 logger = logging.getLogger("voicebuddy.server")
 
 HTML_PATH = Path(__file__).parent / "static" / "index.html"
-
-# Known selectable voices — key matches the ?voice= query param from the UI
-VOICE_IDS: dict[str, str] = {
-    "allison": "f786b574-daa5-4673-aa0c-cbe3e8534c02",
-    "don": "a3e3ea35-4533-47d6-afdb-c286538657ca",
-}
 
 
 def _load_html() -> str:
@@ -70,10 +65,8 @@ async def handle_connection(websocket):
     remote = websocket.remote_address
 
     # Resolve voice ID from ?voice= query param (e.g. /ws?voice=allison)
-    qs = parse_qs(urlparse(websocket.request.path).query)
-    voice_key = qs.get("voice", ["allison"])[0].lower()
-    voice_id = VOICE_IDS.get(voice_key) or VOICE_IDS["allison"]
-    logger.info("Client connected: %s (voice=%s)", remote, voice_key)
+    voice_id = resolve_voice_id(websocket.request.path)
+    logger.info("Client connected: %s (voice=%s)", remote, voice_id)
 
     log = LatencyLogger()
     sm = StateMachine(log)
@@ -573,6 +566,7 @@ async def main(host: str = "0.0.0.0", port: int = 8765):
     # factory after this initial load, making subsequent instantiations fast.
     try:
         from silero_vad import load_silero_vad as _load_vad
+
         logger.info("Pre-loading Silero VAD model...")
         _load_vad(onnx=True)
         logger.info("Silero VAD model pre-loaded OK")

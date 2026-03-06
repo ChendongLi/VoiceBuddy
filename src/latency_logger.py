@@ -9,9 +9,8 @@ Designed for async contexts (asyncio compatible).
 import json
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 @dataclass
@@ -31,7 +30,7 @@ class LogEvent:
     turn_id: int
     timestamp_ms: float
     event_type: str
-    data: Dict[str, Any]
+    data: dict[str, Any]
 
 
 class LatencyLogger:
@@ -58,7 +57,7 @@ class LatencyLogger:
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
 
     def log_event(
-        self, session_id: str, turn_id: int, event_type: str, data: Dict[str, Any], timestamp_ms: Optional[float] = None
+        self, session_id: str, turn_id: int, event_type: str, data: dict[str, Any], timestamp_ms: float | None = None
     ) -> None:
         """
         Log a single event to the JSONL file.
@@ -82,7 +81,7 @@ class LatencyLogger:
             f.write(json.dumps(asdict(event)) + "\n")
 
     def log_latency(
-        self, session_id: str, turn_id: int, stage: str, latency_ms: float, metadata: Optional[Dict[str, Any]] = None
+        self, session_id: str, turn_id: int, stage: str, latency_ms: float, metadata: dict[str, Any] | None = None
     ) -> None:
         """
         Log a latency measurement event.
@@ -101,7 +100,7 @@ class LatencyLogger:
         self.log_event(session_id, turn_id, "latency", data)
 
     def log_state_transition(
-        self, session_id: str, turn_id: int, from_state: str, to_state: str, metadata: Optional[Dict[str, Any]] = None
+        self, session_id: str, turn_id: int, from_state: str, to_state: str, metadata: dict[str, Any] | None = None
     ) -> None:
         """
         Log a state machine transition event.
@@ -125,7 +124,7 @@ class LatencyLogger:
         turn_id: int,
         error_type: str,
         error_message: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Log an error event.
@@ -163,7 +162,7 @@ class LatencyLogger:
         if not self.log_file.exists():
             return events
 
-        with open(self.log_file, "r") as f:
+        with open(self.log_file) as f:
             for line in f:
                 if line.strip():
                     event_dict = json.loads(line)

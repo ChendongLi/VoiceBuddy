@@ -13,14 +13,10 @@ Success criteria:
 """
 
 import asyncio
-import json
-import os
 import sys
 import time
-import wave  # Still needed for reading test audio in Deepgram test
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional
 
 # Third-party imports
 try:
@@ -54,7 +50,7 @@ def load_env():
         print(f"❌ .env file not found at {env_path}")
         sys.exit(1)
 
-    with open(env_path, "r") as f:
+    with open(env_path) as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#"):
@@ -70,18 +66,18 @@ def load_env():
 class DeepgramStreamResult:
     """Track results from Deepgram WebSocket streaming test."""
 
-    connection_time_ms: Optional[float] = None
-    eot_time_ms: Optional[float] = None
-    transcript: Optional[str] = None
-    error: Optional[str] = None
+    connection_time_ms: float | None = None
+    eot_time_ms: float | None = None
+    transcript: str | None = None
+    error: str | None = None
     eot_detected: asyncio.Event = field(default_factory=asyncio.Event)
-    last_transcript_time: Optional[float] = None
+    last_transcript_time: float | None = None
 
 
 class APIValidator:
     """Validates all VoiceBuddy API integrations."""
 
-    def __init__(self, env_vars: Dict[str, str]):
+    def __init__(self, env_vars: dict[str, str]):
         self.env_vars = env_vars
         self.logger = LatencyLogger()
         self.session_id = "phase1-validation"
@@ -123,7 +119,7 @@ class APIValidator:
             if test_audio_path.exists():
                 file_ok = await self.test_deepgram_file_streaming(api_key, test_audio_path)
             else:
-                print(f"⚠️  Test audio file not found, skipping file test")
+                print("⚠️  Test audio file not found, skipping file test")
                 file_ok = await self._test_deepgram_connectivity(api_key)
 
             mic_ok = await self.test_deepgram_mic_streaming(api_key, duration_seconds=5)
@@ -144,8 +140,8 @@ class APIValidator:
                 latency_ms = (time.time() - start_time) * 1000
 
                 if response.status_code == 200:
-                    print(f"✅ Deepgram API: Connected successfully")
-                    print(f"   API Key Valid: Yes")
+                    print("✅ Deepgram API: Connected successfully")
+                    print("   API Key Valid: Yes")
                     print(f"   Response Time: {latency_ms:.1f}ms")
                     self.results["deepgram"] = {
                         "status": "pass",
@@ -190,18 +186,17 @@ class APIValidator:
             # Connect to WebSocket
             connection_start = time.time()
 
-            connect_kwargs = dict(
-                model="flux-general-en",
-                encoding="linear16",
-                sample_rate=str(framerate),  # Use actual sample rate from audio file
-            )
+            connect_kwargs = {
+                "model": "flux-general-en",
+                "encoding": "linear16",
+                "sample_rate": str(framerate),  # Use actual sample rate from audio file
+            }
             # Enable EOT detection for mic mode (matching test_deepgram_mic.py)
             if duration_seconds is not None:
                 connect_kwargs["eot_threshold"] = 0.7
                 connect_kwargs["eager_eot_threshold"] = 0.6
 
             async with client.listen.v2.connect(**connect_kwargs) as connection:
-
                 result.connection_time_ms = (time.time() - connection_start) * 1000
                 print(f"✅ WebSocket connected ({result.connection_time_ms:.1f}ms)")
 
@@ -250,7 +245,7 @@ class APIValidator:
                             self._stream_audio(connection, audio_source, CHUNK_SIZE),
                             timeout=duration_seconds,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         pass  # Expected for mic — fall through to validation
                 else:
                     # File mode: stream all chunks
@@ -293,7 +288,7 @@ class APIValidator:
                     return False
 
                 # Success
-                print(f"✅ Deepgram API: EOT detected")
+                print("✅ Deepgram API: EOT detected")
                 print(f"   Time to EOT: {result.eot_time_ms:.1f}ms")
                 print(f'   Transcript: "{result.transcript}"')
 
@@ -355,11 +350,11 @@ class APIValidator:
             traceback.print_exc()
             return False
 
-    async def test_anthropic_model(self, model_name: str, display_name: str) -> Optional[float]:
+    async def test_anthropic_model(self, model_name: str, display_name: str) -> float | None:
         """Test a specific Anthropic Claude model."""
         api_key = self.env_vars.get("CLAUDE_API_KEY")
         if not api_key:
-            print(f"❌ CLAUDE_API_KEY not found in .env")
+            print("❌ CLAUDE_API_KEY not found in .env")
             return None
 
         client = AsyncAnthropic(api_key=api_key)
@@ -482,10 +477,10 @@ class APIValidator:
             ttfb_ms = (first_byte_time - start_time) * 1000
             total_audio_bytes = sum(len(chunk) for chunk in audio_chunks)
 
-            print(f"✅ Cartesia API: Audio generated")
+            print("✅ Cartesia API: Audio generated")
             print(f"   Time to First Byte: {ttfb_ms:.1f}ms")
             print(f"   Total Audio Bytes: {total_audio_bytes:,}")
-            print(f"   Voice Clone: Active")
+            print("   Voice Clone: Active")
 
             # Save audio to test file (already in WAV format)
             output_path = Path(__file__).parent.parent / "assets" / "audio" / "outputs" / "test_cartesia_output.wav"
@@ -598,7 +593,7 @@ class APIValidator:
         print("-" * 80)
 
         # Log file location
-        print(f"\nLog file: logs/voicebuddy.jsonl")
+        print("\nLog file: logs/voicebuddy.jsonl")
 
         # Overall status
         print("\n" + "=" * 80)

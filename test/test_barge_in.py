@@ -5,10 +5,9 @@ import json
 import sys
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
-import pytest_asyncio
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -313,7 +312,7 @@ class TestTtsTurnEndSentinel:
     async def test_sentinel_fires_playback_done(self):
         """TTS worker fires tts_playback_done when it dequeues __turn_end__."""
         tts_queue: asyncio.Queue = asyncio.Queue()
-        event_queue: asyncio.Queue = asyncio.Queue()
+        asyncio.Queue()
 
         # Simulate: two sentences then turn-end sentinel
         tts_queue.put_nowait(("Hello there.", "ctx-1"))
