@@ -66,6 +66,20 @@
     color: #444;
   }
 
+  .voice-select-row {
+    display: flex; align-items: center; gap: 0.6rem;
+    margin-bottom: 0.8rem;
+  }
+  .voice-select-row label {
+    font-size: 0.8rem; text-transform: uppercase; color: #888;
+    white-space: nowrap;
+  }
+  #voiceSelect {
+    flex: 1; background: #0f3460; color: #e0e0e0;
+    border: 1px solid #1a4a80; border-radius: 6px;
+    padding: 0.4rem 0.6rem; font-size: 0.9rem; cursor: pointer;
+  }
+  #voiceSelect:focus { outline: none; border-color: #4caf50; }
   .buttons { display: flex; gap: 0.8rem; }
   button {
     flex: 1; padding: 0.7rem; border: none; border-radius: 8px;
@@ -97,6 +111,13 @@
   </div>
   <div class="live-transcript" id="liveTranscript"></div>
   <div class="conversation" id="conversation"></div>
+  <div class="voice-select-row">
+    <label for="voiceSelect">Voice</label>
+    <select id="voiceSelect">
+      <option value="allison">Allison</option>
+      <option value="don">Don</option>
+    </select>
+  </div>
   <div class="buttons">
     <button id="startBtn">Start</button>
     <button id="stopBtn" disabled>Stop</button>
@@ -116,12 +137,16 @@
   // --- DOM refs ---
   const startBtn = document.getElementById("startBtn");
   const stopBtn = document.getElementById("stopBtn");
+  const voiceSelect = document.getElementById("voiceSelect");
   const statusDot = document.getElementById("statusDot");
   const statusText = document.getElementById("statusText");
   const rttValue = document.getElementById("rttValue");
   const stateValue = document.getElementById("stateValue");
   const liveTranscript = document.getElementById("liveTranscript");
   const conversation = document.getElementById("conversation");
+
+  const VOICE_LABELS = { allison: "Allison", don: "Don" };
+  function voiceName() { return VOICE_LABELS[voiceSelect.value] || voiceSelect.value; }
 
   // --- State ---
   let ws = null;
@@ -201,7 +226,8 @@ registerProcessor("downsample-processor", DownsampleProcessor);
   function addMessage(role, text) {
     const div = document.createElement("div");
     div.className = "msg " + role;
-    div.innerHTML = `<div class="role">${role === "user" ? "You" : role === "filler" ? "Allison (thinking)" : "Allison"}</div><div class="text">${escapeHtml(text)}</div>`;
+    const name = voiceName();
+    div.innerHTML = `<div class="role">${role === "user" ? "You" : role === "filler" ? name + " (thinking)" : name}</div><div class="text">${escapeHtml(text)}</div>`;
     conversation.appendChild(div);
     conversation.scrollTop = conversation.scrollHeight;
   }
@@ -277,7 +303,9 @@ registerProcessor("downsample-processor", DownsampleProcessor);
       workletNode.connect(captureCtx.destination);
 
       const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
-      ws = new WebSocket(wsProto + "//" + location.host + "/ws");
+      const selectedVoice = voiceSelect.value;
+      voiceSelect.disabled = true;
+      ws = new WebSocket(wsProto + "//" + location.host + "/ws?voice=" + selectedVoice);
       ws.binaryType = "arraybuffer";
 
       ws.onopen = () => {
@@ -378,6 +406,7 @@ registerProcessor("downsample-processor", DownsampleProcessor);
     ws = null;
     startBtn.disabled = false;
     stopBtn.disabled = true;
+    voiceSelect.disabled = false;
   }
 
   function stop() {

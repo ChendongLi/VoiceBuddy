@@ -16,6 +16,7 @@ import sys
 import time
 from http import HTTPStatus
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from websockets.asyncio.server import serve
 
@@ -33,6 +34,12 @@ from vad_detector import VADDetector
 logger = logging.getLogger("voicebuddy.server")
 
 HTML_PATH = Path(__file__).parent / "static" / "index.html"
+
+# Known selectable voices — key matches the ?voice= query param from the UI
+VOICE_IDS: dict[str, str] = {
+    "allison": "f786b574-daa5-4673-aa0c-cbe3e8534c02",
+    "don": "a3e3ea35-4533-47d6-afdb-c286538657ca",
+}
 
 
 def _load_html() -> str:
@@ -61,7 +68,12 @@ def process_request(connection, request):
 async def handle_connection(websocket):
     """Handle a single WebSocket connection with the full STT → LLM → TTS pipeline."""
     remote = websocket.remote_address
-    logger.info("Client connected: %s", remote)
+
+    # Resolve voice ID from ?voice= query param (e.g. /ws?voice=allison)
+    qs = parse_qs(urlparse(websocket.request.path).query)
+    voice_key = qs.get("voice", ["allison"])[0].lower()
+    voice_id = VOICE_IDS.get(voice_key) or VOICE_IDS["allison"]
+    logger.info("Client connected: %s (voice=%s)", remote, voice_key)
 
     log = LatencyLogger()
     sm = StateMachine(log)
@@ -119,7 +131,7 @@ async def handle_connection(websocket):
     llm.on_full_ready = on_full_ready
     llm.on_full_token = on_full_token
 
-    tts = TTSClient()
+    tts = TTSClient(voice_id=voice_id)
     vad = VADDetector(on_speech_start=on_vad_speech_start, on_speech_end=on_vad_speech_end)
     vad_speech_active = False
 
