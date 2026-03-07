@@ -157,6 +157,9 @@
   let pingInterval = null;
   let rttSamples = [];
   let nextPlayTime = 0;
+  // Guard against stale in-flight audio chunks after barge-in cancellation.
+  // Set to false on stop_playback; re-enabled by tts_start before each new turn.
+  let playbackEnabled = true;
 
   // --- AudioWorklet processor code (inline via Blob URL) ---
   const workletCode = `
@@ -275,6 +278,7 @@ registerProcessor("downsample-processor", DownsampleProcessor);
     startBtn.disabled = true;
     rttSamples = [];
     nextPlayTime = 0;
+    playbackEnabled = true;
     rttValue.textContent = "-- ms";
     stateValue.textContent = "IDLE";
     liveTranscript.textContent = "";
@@ -327,7 +331,11 @@ registerProcessor("downsample-processor", DownsampleProcessor);
 
       ws.onmessage = (e) => {
         if (e.data instanceof ArrayBuffer) {
-          // Binary frame — TTS audio (raw PCM Int16)
+          // Binary frame — TTS audio (raw PCM Int16).
+          // Discard stale chunks that arrived after a barge-in cancellation;
+          // playbackEnabled is re-armed by the tts_start JSON message sent
+          // immediately before the first chunk of each new turn.
+          if (!playbackEnabled) return;
           const int16 = new Int16Array(e.data);
           playPcmChunk(int16);
           setStatus("Playing response", "speaking");
@@ -364,7 +372,14 @@ registerProcessor("downsample-processor", DownsampleProcessor);
               stateValue.textContent = "IDLE";
               nextPlayTime = 0; // Reset jitter buffer for next turn
 
+            } else if (msg.type === "tts_start") {
+              // New turn's audio is about to begin — re-enable playback.
+              playbackEnabled = true;
+
             } else if (msg.type === "stop_playback") {
+              // Barge-in: disable playback first so any stale binary frames
+              // that arrive after this message are silently discarded.
+              playbackEnabled = false;
               stopPlayback();
               setStatus("Connected — listening", "streaming");
               stateValue.textContent = "LISTENING";
