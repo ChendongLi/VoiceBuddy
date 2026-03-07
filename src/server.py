@@ -479,6 +479,10 @@ async def handle_connection(websocket):
                         if first_byte_of_turn:
                             event_queue.put_nowait(("tts_first_byte", {"ts_ms": ts_ms}))
                             first_byte_of_turn = False
+                            # Signal browser to enable audio playback for this new turn.
+                            # Must be sent before the first binary frame so the browser
+                            # discards any stale in-flight chunks from the previous turn.
+                            await websocket.send(json.dumps({"type": "tts_start"}))
                         first_byte = False
                     await websocket.send(audio_chunk)  # Binary frame → browser plays it
             except Exception as e:
