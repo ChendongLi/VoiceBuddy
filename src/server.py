@@ -18,21 +18,23 @@ import time
 from http import HTTPStatus
 from pathlib import Path
 
+from sqlalchemy import select
 from websockets.asyncio.server import serve
 
 from http_server import start_http_server
-from tenant_config import TenantRegistry
+from tenant_config import TenantConfig, TenantRegistry
 from voice_config import resolve_voice_id
 
 # Make src importable when running as `python src/server.py`
 sys.path.insert(0, str(Path(__file__).parent))
 
+from database import async_session
+from deepgram_client import DeepgramFluxClient
 from handoff_service import HandoffService
 from intent_detector import detect_handoff_intent
-
-from deepgram_client import DeepgramFluxClient
 from latency_logger import LatencyLogger
 from llm_orchestrator import LLMOrchestrator
+from post_call_service import PostCallService
 from sentence_splitter import SentenceSplitter
 from state_machine import Event, State, StateMachine
 from tts_client import TTSClient
@@ -40,6 +42,8 @@ from twilio_audio_bridge import TwilioAudioBridge
 from vad_detector import VADDetector
 
 logger = logging.getLogger("voicebuddy.server")
+
+tenant_registry: TenantRegistry | None = None
 
 # Handoff configuration (override via env vars)
 HANDOFF_FALLBACK_NUMBER = os.environ.get("HANDOFF_FALLBACK_NUMBER", "")
@@ -637,7 +641,11 @@ async def handle_twilio_media(websocket):
 
     bridge = TwilioAudioBridge()
     stream_sid: str | None = None
+    call_sid: str | None = None
+    caller_number: str | None = None
+    called_number: str | None = None
     outbound_seq = 0
+    transcript_parts: list[str] = []
 
     # Resolve voice from query param (e.g. /twilio-media?voice=allison)
     voice_id = resolve_voice_id(websocket.request.path)
@@ -762,6 +770,7 @@ async def handle_twilio_media(websocket):
                     logger.info("[%s] Transcript: %r", session_id[:8], transcript)
 
                     if transcript:
+                        transcript_parts.append(transcript)
                         turn_context_id = f"{session_id[:8]}-{sm.ctx.turn_id}"
                         llm_cancelled = False
                         llm_task = asyncio.create_task(llm.process_turn(transcript))
@@ -854,7 +863,12 @@ async def handle_twilio_media(websocket):
 
             if event == "start":
                 stream_sid = msg.get("streamSid")
-                logger.info("[%s] Twilio stream started: %s", session_id[:8], stream_sid)
+                start_data = msg.get("start", {})
+                call_sid = start_data.get("callSid")
+                custom = start_data.get("customParameters", {})
+                caller_number = custom.get("from", "")
+                called_number = custom.get("to", "")
+                logger.info("[%s] Twilio stream started: %s (CallSid=%s)", session_id[:8], stream_sid, call_sid)
 
             elif event == "media":
                 payload = msg.get("media", {}).get("payload", "")
@@ -885,7 +899,46 @@ async def handle_twilio_media(websocket):
         if sm.current_state != State.IDLE:
             sm.handle(Event.RESET)
 
+        # Fire post-call processing (non-blocking)
+        full_transcript = "\n".join(transcript_parts)
+        if full_transcript and call_sid and called_number:
+            tenant_config = tenant_registry.get_by_phone(called_number)
+            if tenant_config:
+                asyncio.create_task(_run_post_call(call_sid, full_transcript, tenant_config, caller_number))
+
         logger.info("Twilio MediaStream disconnected: %s", remote)
+
+
+async def _run_post_call(
+    call_sid: str, transcript_text: str, tenant_config: TenantConfig, caller_number: str | None
+) -> None:
+    """Run post-call processing in background with its own DB session."""
+    from models import Call, Customer
+
+    try:
+        async with async_session() as db:
+            # Look up the Call record by twilio_call_sid
+            result = await db.execute(select(Call).where(Call.twilio_call_sid == call_sid))
+            call = result.scalar_one_or_none()
+            if not call:
+                logger.warning("Post-call: no Call record for sid=%s", call_sid)
+                return
+
+            # Look up the Customer if we have a caller number
+            customer = None
+            if caller_number:
+                result = await db.execute(
+                    select(Customer).where(
+                        Customer.tenant_id == tenant_config.tenant_id,
+                        Customer.phone_number == caller_number,
+                    )
+                )
+                customer = result.scalar_one_or_none()
+
+            svc = PostCallService()
+            await svc.process(db, call.id, transcript_text, tenant_config, customer)
+    except Exception:
+        logger.exception("Post-call processing failed for call_sid=%s", call_sid)
 
 
 async def dispatch_connection(websocket):
@@ -904,6 +957,7 @@ async def main(host: str = "0.0.0.0", port: int = 8765):
     logger.info("Open http://%s:%d/ in your browser", host, port)
 
     # Load tenant configs from tenants/*.yaml
+    global tenant_registry
     tenant_registry = TenantRegistry()
     logger.info("Loaded %d tenant(s)", len(tenant_registry.all_tenants))
 
