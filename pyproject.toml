@@ -19,9 +19,15 @@ pydub = "^0.25.1"
 python-dotenv = "^1.2.1"
 pydantic = "^2.12.5"
 silero-vad = "^5.1"
+twilio = "^9.0"
 PyYAML = "^6.0"
 onnxruntime = "^1.16"
 aiosqlite = "^0.20.0"  # SQLite driver for local dev (no Docker needed)
+sqlalchemy = {version = "^2.0", extras = ["asyncio"]}
+asyncpg = "^0.31"
+alembic = "^1.16"
+pytz = "^2024.1"
+aiohttp = "^3.9"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
@@ -57,6 +63,7 @@ indent-style = "space"
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
+addopts = "-m 'not integration'"  # skip integration tests by default; run with -m integration
 markers = [
     "integration: tests that bind real TCP ports and require network",
 ]
