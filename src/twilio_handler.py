@@ -14,7 +14,10 @@ import os
 from http import HTTPStatus
 from urllib.parse import parse_qs
 
+from dotenv import load_dotenv
 from twilio.request_validator import RequestValidator
+
+load_dotenv()
 
 logger = logging.getLogger("voicebuddy.twilio")
 
@@ -46,7 +49,8 @@ def _validate_twilio_signature(request) -> bool:
 
 def build_twiml_response() -> str:
     """Build TwiML XML that connects the call to our MediaStream WebSocket."""
-    host = TWILIO_WEBHOOK_HOST or "localhost:8765"
+    # Read fresh each call so runtime env changes (e.g. TWILIO_WEBHOOK_HOST) take effect
+    host = os.environ.get("TWILIO_WEBHOOK_HOST", "") or "localhost:8766"
     scheme = "ws" if host.startswith("localhost") or host.startswith("127.") else "wss"
     ws_url = f"{scheme}://{host}/twilio-media"
     return (

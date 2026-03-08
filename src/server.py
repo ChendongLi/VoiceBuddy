@@ -21,7 +21,7 @@ from pathlib import Path
 from sqlalchemy import select
 from websockets.asyncio.server import serve
 
-from http_server import set_tenant_registry, start_http_server
+from http_server import set_tenant_registry, set_twilio_media_handler, start_http_server
 from tenant_config import TenantConfig, TenantRegistry
 from voice_config import resolve_voice_id
 
@@ -996,6 +996,7 @@ async def main(host: str = "0.0.0.0", port: int = 8765):
     tenant_registry = TenantRegistry()
     logger.info("Loaded %d tenant(s)", len(tenant_registry.all_tenants))
     set_tenant_registry(tenant_registry)
+    set_twilio_media_handler(handle_twilio_media)
 
     # Pre-warm Silero VAD model so the first WebSocket connection doesn't pay
     # the ONNX session-creation cost. Each VADDetector still gets its own
