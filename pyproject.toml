@@ -23,6 +23,9 @@ twilio = "^9.0"
 PyYAML = "^6.0"
 onnxruntime = "^1.16"
 aiosqlite = "^0.20.0"  # SQLite driver for local dev (no Docker needed)
+sqlalchemy = {version = "^2.0", extras = ["asyncio"]}
+asyncpg = "^0.31"
+alembic = "^1.16"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
