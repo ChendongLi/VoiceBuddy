@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,9 +12,7 @@ from models import Appointment, Customer
 
 
 class CustomerService:
-    async def get_or_create(
-        self, db: AsyncSession, tenant_id: str, phone: str
-    ) -> tuple[Customer, bool]:
+    async def get_or_create(self, db: AsyncSession, tenant_id: str, phone: str) -> tuple[Customer, bool]:
         """Lookup customer by tenant+phone. Returns (customer, is_new). Creates if not found."""
         stmt = select(Customer).where(
             Customer.tenant_id == tenant_id,
@@ -60,11 +58,9 @@ class CustomerService:
         await db.refresh(customer)
         return customer
 
-    async def get_upcoming_appointment(
-        self, db: AsyncSession, customer_id: uuid.UUID
-    ) -> Appointment | None:
+    async def get_upcoming_appointment(self, db: AsyncSession, customer_id: uuid.UUID) -> Appointment | None:
         """Return next upcoming confirmed appointment for customer."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         stmt = (
             select(Appointment)
             .where(
@@ -78,9 +74,7 @@ class CustomerService:
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
-    def build_customer_context(
-        self, customer: Customer, appointment: Appointment | None
-    ) -> str:
+    def build_customer_context(self, customer: Customer, appointment: Appointment | None) -> str:
         """Build a context string to inject into the LLM system prompt."""
         if customer.name:
             # Returning customer
@@ -89,9 +83,7 @@ class CustomerService:
                 apt_date = appointment.starts_at.strftime("%b %d")
                 service = appointment.service_name or "appointment"
                 if appointment.provider_name:
-                    parts.append(
-                        f"(next apt: {apt_date} {service} with {appointment.provider_name})"
-                    )
+                    parts.append(f"(next apt: {apt_date} {service} with {appointment.provider_name})")
                 else:
                     parts.append(f"(next apt: {apt_date} {service})")
             return " ".join(parts)

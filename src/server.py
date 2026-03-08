@@ -30,10 +30,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from call_service import CallService
 from customer_service import CustomerService
 from database import async_session
+from deepgram_client import DeepgramFluxClient
 from handoff_service import HandoffService
 from intent_detector import detect_handoff_intent
-
-from deepgram_client import DeepgramFluxClient
 from latency_logger import LatencyLogger
 from llm_orchestrator import LLMOrchestrator
 from sentence_splitter import SentenceSplitter
@@ -643,7 +642,6 @@ async def handle_twilio_media(websocket):
     bridge = TwilioAudioBridge()
     stream_sid: str | None = None
     outbound_seq = 0
-    call_id: str | None = None
 
     # Resolve voice from query param (e.g. /twilio-media?voice=allison)
     voice_id = resolve_voice_id(websocket.request.path)
@@ -879,17 +877,16 @@ async def handle_twilio_media(websocket):
                                 customer, is_new = await customer_svc.get_or_create(
                                     db, tenant_cfg.tenant_id, caller_number
                                 )
-                                appointment = await customer_svc.get_upcoming_appointment(
-                                    db, customer.id
+                                appointment = await customer_svc.get_upcoming_appointment(db, customer.id)
+                                customer_context = customer_svc.build_customer_context(customer, appointment)
+                                await call_svc.start_call(
+                                    db,
+                                    tenant_cfg.tenant_id,
+                                    customer.id,
+                                    twilio_call_sid,
+                                    caller_number,
                                 )
-                                customer_context = customer_svc.build_customer_context(
-                                    customer, appointment
-                                )
-                                call_record = await call_svc.start_call(
-                                    db, tenant_cfg.tenant_id, customer.id,
-                                    twilio_call_sid, caller_number,
-                                )
-                                call_id = str(call_record.id)
+                                pass  # call record stored in DB
 
                             # Inject customer context into LLM system prompt
                             llm.system_prompt_extra = customer_context

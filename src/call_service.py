@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,7 +47,7 @@ class CallService:
 
         call.outcome = outcome
         call.duration_sec = duration_sec
-        call.ended_at = datetime.now(timezone.utc)
+        call.ended_at = datetime.now(UTC)
 
         await db.commit()
         await db.refresh(call)
