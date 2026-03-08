@@ -73,10 +73,7 @@ class HandoffService:
     def generate_transfer_twiml(fallback_number: str) -> str:
         """Generate TwiML XML to transfer a call."""
         return (
-            "<Response>"
-            "<Say>Transferring you now, please hold.</Say>"
-            f"<Dial>{fallback_number}</Dial>"
-            "</Response>"
+            "<Response>" "<Say>Transferring you now, please hold.</Say>" f"<Dial>{fallback_number}</Dial>" "</Response>"
         )
 
     @staticmethod
