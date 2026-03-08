@@ -5,6 +5,7 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:  # allow manual trigger via GitHub UI or gh CLI
 
 # Cancel in-flight runs for the same branch/PR so pushes don't queue up.
 concurrency:
