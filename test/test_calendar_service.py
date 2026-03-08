@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.calendar_service import CalendarService
+from calendar_service import CalendarService
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ def service(token_dir: Path) -> CalendarService:
 
 @pytest.mark.asyncio(loop_scope="function")
 async def test_get_credentials_returns_creds(service: CalendarService) -> None:
-    with patch("src.calendar_service.Credentials.from_authorized_user_file") as mock_from_file:
+    with patch("calendar_service.Credentials.from_authorized_user_file") as mock_from_file:
         mock_creds = MagicMock()
         mock_creds.expired = False
         mock_from_file.return_value = mock_creds
@@ -59,7 +59,7 @@ async def test_get_credentials_missing_tenant(service: CalendarService) -> None:
 
 @pytest.mark.asyncio(loop_scope="function")
 async def test_get_credentials_refreshes_expired(service: CalendarService) -> None:
-    with patch("src.calendar_service.Credentials.from_authorized_user_file") as mock_from_file:
+    with patch("calendar_service.Credentials.from_authorized_user_file") as mock_from_file:
         mock_creds = MagicMock()
         mock_creds.expired = True
         mock_creds.refresh_token = "fake-refresh"
@@ -85,7 +85,7 @@ async def test_list_available_slots_empty_calendar(service: CalendarService) -> 
 
     with (
         patch.object(service, "get_credentials", return_value=mock_creds),
-        patch("src.calendar_service.build") as mock_build,
+        patch("calendar_service.build") as mock_build,
     ):
         mock_service = MagicMock()
         mock_build.return_value = mock_service
@@ -125,7 +125,7 @@ async def test_list_available_slots_with_busy(service: CalendarService) -> None:
 
     with (
         patch.object(service, "get_credentials", return_value=mock_creds),
-        patch("src.calendar_service.build") as mock_build,
+        patch("calendar_service.build") as mock_build,
     ):
         mock_service = MagicMock()
         mock_build.return_value = mock_service
@@ -168,7 +168,7 @@ async def test_create_event(service: CalendarService) -> None:
 
     with (
         patch.object(service, "get_credentials", return_value=mock_creds),
-        patch("src.calendar_service.build") as mock_build,
+        patch("calendar_service.build") as mock_build,
     ):
         mock_service = MagicMock()
         mock_build.return_value = mock_service
@@ -214,7 +214,7 @@ async def test_cancel_event_success(service: CalendarService) -> None:
 
     with (
         patch.object(service, "get_credentials", return_value=mock_creds),
-        patch("src.calendar_service.build") as mock_build,
+        patch("calendar_service.build") as mock_build,
     ):
         mock_service = MagicMock()
         mock_build.return_value = mock_service
@@ -236,7 +236,7 @@ async def test_cancel_event_failure(service: CalendarService) -> None:
 
     with (
         patch.object(service, "get_credentials", return_value=mock_creds),
-        patch("src.calendar_service.build") as mock_build,
+        patch("calendar_service.build") as mock_build,
     ):
         mock_service = MagicMock()
         mock_build.return_value = mock_service
