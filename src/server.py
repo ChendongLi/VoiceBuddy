@@ -29,6 +29,7 @@ from voice_config import resolve_voice_id
 sys.path.insert(0, str(Path(__file__).parent))
 
 from call_service import CallService
+from confirmation_builder import ConfirmationBuilder
 from customer_service import CustomerService
 from database import async_session
 from deepgram_client import DeepgramFluxClient
@@ -894,6 +895,13 @@ async def handle_twilio_media(websocket):
                                     customer.id,
                                     is_new,
                                 )
+                                # Play caller verification prompt
+                                cb = ConfirmationBuilder()
+                                name = customer.name if not is_new else None
+                                verify_msg = cb.build_verification_prompt(name)
+                                turn_context_id = f"{session_id[:8]}-verify"
+                                tts_queue.put_nowait((verify_msg, turn_context_id))
+                                tts_queue.put_nowait(("__turn_end__", turn_context_id))
                         except Exception as e:
                             logger.warning("[%s] Customer lookup failed: %s", session_id[:8], e)
 
