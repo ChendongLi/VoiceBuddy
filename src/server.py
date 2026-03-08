@@ -20,6 +20,7 @@ from pathlib import Path
 
 from websockets.asyncio.server import serve
 
+from twilio_handler import handle_incoming_call, handle_twilio_media
 from voice_config import resolve_voice_id
 
 # Make src importable when running as `python src/server.py`
@@ -47,7 +48,11 @@ HTML_CONTENT = _load_html()
 
 
 def process_request(connection, request):
-    """Serve index.html on GET /; /health for probes; allow WS upgrade on /ws; 404 otherwise."""
+    """Route HTTP and WebSocket requests.
+
+    HTTP: GET / (UI), GET /health (probe), POST /incoming-call (Twilio webhook)
+    WS:  /ws (browser), /twilio-media (Twilio MediaStream)
+    """
     if request.path == "/health":
         response = connection.respond(HTTPStatus.OK, '{"status":"ok"}')
         response.headers["Content-Type"] = "application/json"
@@ -56,13 +61,22 @@ def process_request(connection, request):
         response = connection.respond(HTTPStatus.OK, HTML_CONTENT)
         response.headers["Content-Type"] = "text/html; charset=utf-8"
         return response
+    if request.path == "/incoming-call":
+        return handle_incoming_call(connection, request)
     if request.path == "/ws" or request.path.startswith("/ws?"):
+        return None  # proceed with WebSocket upgrade
+    if request.path == "/twilio-media":
         return None  # proceed with WebSocket upgrade
     return connection.respond(HTTPStatus.NOT_FOUND, "Not Found")
 
 
 async def handle_connection(websocket):
-    """Handle a single WebSocket connection with the full STT → LLM → TTS pipeline."""
+    """Handle a single WebSocket connection — dispatch by path."""
+    if websocket.request.path == "/twilio-media":
+        await handle_twilio_media(websocket)
+        return
+
+    # --- Browser /ws pipeline below ---
     remote = websocket.remote_address
 
     # Resolve voice ID from ?voice= query param (e.g. /ws?voice=allison)
