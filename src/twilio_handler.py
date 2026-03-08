@@ -22,19 +22,23 @@ TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
 TWILIO_WEBHOOK_HOST = os.environ.get("TWILIO_WEBHOOK_HOST", "")
 
 
+def _get_request_body(request) -> bytes:
+    """Safely extract request body — websockets Request may not expose body attribute."""
+    return getattr(request, "body", None) or b""
+
+
 def _validate_twilio_signature(request) -> bool:
-    """Validate Twilio request signature. Returns True if valid or if auth token is not configured."""
-    if not TWILIO_AUTH_TOKEN:
-        logger.warning("TWILIO_AUTH_TOKEN not set — skipping signature validation")
+    """Validate Twilio request signature. Skipped if TWILIO_AUTH_TOKEN or TWILIO_WEBHOOK_HOST not set."""
+    if not TWILIO_AUTH_TOKEN or not TWILIO_WEBHOOK_HOST:
+        logger.warning("Twilio signature validation skipped (TWILIO_AUTH_TOKEN or TWILIO_WEBHOOK_HOST not set)")
         return True
 
     validator = RequestValidator(TWILIO_AUTH_TOKEN)
     signature = request.headers.get("X-Twilio-Signature", "")
     url = f"https://{TWILIO_WEBHOOK_HOST}/incoming-call"
 
-    body = request.body or b""
+    body = _get_request_body(request)
     params = parse_qs(body.decode("utf-8", errors="replace"))
-    # parse_qs returns lists; Twilio validator expects single values
     flat_params = {k: v[0] for k, v in params.items()}
 
     return validator.validate(url, flat_params, signature)
@@ -42,7 +46,9 @@ def _validate_twilio_signature(request) -> bool:
 
 def build_twiml_response() -> str:
     """Build TwiML XML that connects the call to our MediaStream WebSocket."""
-    ws_url = f"wss://{TWILIO_WEBHOOK_HOST}/twilio-media"
+    host = TWILIO_WEBHOOK_HOST or "localhost:8765"
+    scheme = "ws" if host.startswith("localhost") or host.startswith("127.") else "wss"
+    ws_url = f"{scheme}://{host}/twilio-media"
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response>"
@@ -55,15 +61,19 @@ def build_twiml_response() -> str:
 
 def handle_incoming_call(connection, request):
     """HTTP handler for POST /incoming-call. Returns TwiML or 403 on bad signature."""
-    if not _validate_twilio_signature(request):
-        logger.warning("Invalid Twilio signature on /incoming-call")
-        return connection.respond(HTTPStatus.FORBIDDEN, "Invalid signature")
+    try:
+        if not _validate_twilio_signature(request):
+            logger.warning("Invalid Twilio signature on /incoming-call")
+            return connection.respond(HTTPStatus.FORBIDDEN, "Invalid signature")
 
-    twiml = build_twiml_response()
-    response = connection.respond(HTTPStatus.OK, twiml)
-    response.headers["Content-Type"] = "application/xml"
-    logger.info("Incoming call → TwiML response (host=%s)", TWILIO_WEBHOOK_HOST)
-    return response
+        twiml = build_twiml_response()
+        response = connection.respond(HTTPStatus.OK, twiml)
+        response.headers["Content-Type"] = "application/xml"
+        logger.info("Incoming call → TwiML response (host=%s)", TWILIO_WEBHOOK_HOST or "localhost")
+        return response
+    except Exception as exc:
+        logger.error("Error handling /incoming-call: %s", exc, exc_info=True)
+        return connection.respond(HTTPStatus.INTERNAL_SERVER_ERROR, "Internal server error")
 
 
 async def handle_twilio_media(websocket):

@@ -21,7 +21,7 @@ from pathlib import Path
 from websockets.asyncio.server import serve
 
 from tenant_config import TenantRegistry
-from twilio_handler import handle_incoming_call, handle_twilio_media
+from twilio_handler import handle_incoming_call
 from voice_config import resolve_voice_id
 
 # Make src importable when running as `python src/server.py`
