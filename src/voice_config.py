@@ -1,4 +1,6 @@
 """
+DEPRECATED: Hardcoded voice IDs — use tenants/*.yaml via TenantRegistry instead (AGE-12).
+
 Voice ID configuration for VoiceBuddy.
 
 Centralises the Cartesia voice registry and the server-side resolution logic
