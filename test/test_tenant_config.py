@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tenant_config import TenantConfig, TenantRegistry
+from tenant_config import TenantRegistry
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "tenants"
 
