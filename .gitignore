@@ -212,3 +212,4 @@ __marimo__/
 assets/audio/outputs/*.wav
 
 logs/
+voicebuddy_dev.db
