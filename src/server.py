@@ -28,6 +28,8 @@ from voice_config import resolve_voice_id
 # Make src importable when running as `python src/server.py`
 sys.path.insert(0, str(Path(__file__).parent))
 
+from call_service import CallService
+from customer_service import CustomerService
 from database import async_session
 from deepgram_client import DeepgramFluxClient
 from handoff_service import HandoffService
@@ -869,6 +871,31 @@ async def handle_twilio_media(websocket):
                 caller_number = custom.get("from", "")
                 called_number = custom.get("to", "")
                 logger.info("[%s] Twilio stream started: %s (CallSid=%s)", session_id[:8], stream_sid, call_sid)
+
+                # Customer lookup — personalize returning callers
+                if caller_number and called_number:
+                    tenant_cfg = tenant_registry.get_by_phone(called_number) if tenant_registry else None
+                    if tenant_cfg:
+                        try:
+                            customer_svc = CustomerService()
+                            call_svc = CallService()
+                            async with async_session() as db:
+                                customer, is_new = await customer_svc.get_or_create(
+                                    db, tenant_cfg.tenant_id, caller_number
+                                )
+                                appointment = await customer_svc.get_upcoming_appointment(db, customer.id)
+                                llm.system_prompt_extra = customer_svc.build_customer_context(customer, appointment)
+                                await call_svc.start_call(
+                                    db, tenant_cfg.tenant_id, customer.id, call_sid or "", caller_number
+                                )
+                                logger.info(
+                                    "[%s] Customer: %s (new=%s)",
+                                    session_id[:8],
+                                    customer.id,
+                                    is_new,
+                                )
+                        except Exception as e:
+                            logger.warning("[%s] Customer lookup failed: %s", session_id[:8], e)
 
             elif event == "media":
                 payload = msg.get("media", {}).get("payload", "")
