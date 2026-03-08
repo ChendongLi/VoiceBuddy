@@ -19,7 +19,8 @@ from pathlib import Path
 
 from websockets.asyncio.server import serve
 
-from twilio_handler import handle_incoming_call, handle_twilio_media
+from http_server import start_http_server
+from twilio_handler import handle_twilio_media
 from voice_config import resolve_voice_id
 
 # Make src importable when running as `python src/server.py`
@@ -47,9 +48,12 @@ HTML_CONTENT = _load_html()
 
 
 def process_request(connection, request):
-    """Route HTTP and WebSocket requests.
+    """Route WebSocket and GET HTTP requests.
 
-    HTTP: GET / (UI), GET /health (probe), POST /incoming-call (Twilio webhook)
+    NOTE: POST /incoming-call is handled by the aiohttp HTTP server on HTTP_PORT (default 8766).
+    websockets only supports GET — POSTs are rejected at the protocol level.
+
+    HTTP: GET / (UI), GET /health (probe)
     WS:  /ws (browser), /twilio-media (Twilio MediaStream)
     """
     if request.path == "/health":
@@ -60,8 +64,6 @@ def process_request(connection, request):
         response = connection.respond(HTTPStatus.OK, HTML_CONTENT)
         response.headers["Content-Type"] = "text/html; charset=utf-8"
         return response
-    if request.path == "/incoming-call":
-        return handle_incoming_call(connection, request)
     if request.path == "/ws" or request.path.startswith("/ws?"):
         return None  # proceed with WebSocket upgrade
     if request.path == "/twilio-media":
@@ -591,8 +593,15 @@ async def main(host: str = "0.0.0.0", port: int = 8765):
     except Exception as _e:
         logger.warning("VAD pre-load failed (non-fatal): %s", _e)
 
+    # Start aiohttp HTTP server for Twilio webhooks (POST /incoming-call)
+    # websockets only accepts GET — HTTP POSTs need a real HTTP server
+    http_runner = await start_http_server(host=host)
+
     async with serve(handle_connection, host, port, process_request=process_request) as server:
-        await server.serve_forever()
+        try:
+            await server.serve_forever()
+        finally:
+            await http_runner.cleanup()
 
 
 if __name__ == "__main__":

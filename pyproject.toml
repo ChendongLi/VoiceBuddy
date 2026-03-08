@@ -21,6 +21,7 @@ pydantic = "^2.12.5"
 silero-vad = "^5.1"
 twilio = "^9.0"
 onnxruntime = "^1.16"
+aiohttp = "^3.9"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
