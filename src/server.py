@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import sys
 import time
 from http import HTTPStatus
@@ -582,4 +583,8 @@ async def main(host: str = "0.0.0.0", port: int = 8765):
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # SERVER_HOST: 127.0.0.1 by default (local dev, avoids WebSocket issues with 0.0.0.0)
+    # Set SERVER_HOST=0.0.0.0 in production (Cloud Run requires binding all interfaces)
+    _host = os.environ.get("SERVER_HOST", "127.0.0.1")
+    _port = int(os.environ.get("PORT", "8765"))
+    asyncio.run(main(host=_host, port=_port))

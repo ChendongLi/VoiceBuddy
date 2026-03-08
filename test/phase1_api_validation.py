@@ -174,7 +174,7 @@ class APIValidator:
             sample_width = audio_source.get_sample_width()
             framerate = audio_source.get_sample_rate()
 
-            print(f"   Audio: {channels}ch, {sample_width*8}bit, {framerate}Hz ({test_name} mode)")
+            print(f"   Audio: {channels}ch, {sample_width * 8}bit, {framerate}Hz ({test_name} mode)")
 
             # Track results
             result = DeepgramStreamResult()
@@ -535,7 +535,7 @@ class APIValidator:
             if dg["status"] == "pass":
                 print(f"  Latency: {dg['latency_ms']:.1f}ms")
                 if "transcript" in dg:
-                    print(f"  Transcript: \"{dg['transcript']}\"")
+                    print(f'  Transcript: "{dg["transcript"]}"')
 
         if "anthropic" in self.results:
             anth = self.results["anthropic"]
