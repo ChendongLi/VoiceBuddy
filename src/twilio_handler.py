@@ -31,7 +31,11 @@ def _get_request_body(request) -> bytes:
 
 
 def _validate_twilio_signature(request) -> bool:
-    """Validate Twilio request signature. Skipped if TWILIO_AUTH_TOKEN or TWILIO_WEBHOOK_HOST not set."""
+    """Validate Twilio request signature. Skipped if TWILIO_AUTH_TOKEN or TWILIO_WEBHOOK_HOST not set,
+    or if SKIP_TWILIO_VALIDATION=true (useful for local dev with ngrok)."""
+    if os.environ.get("SKIP_TWILIO_VALIDATION", "").lower() in ("1", "true", "yes"):
+        logger.warning("Twilio signature validation SKIPPED (SKIP_TWILIO_VALIDATION=true)")
+        return True
     if not TWILIO_AUTH_TOKEN or not TWILIO_WEBHOOK_HOST:
         logger.warning("Twilio signature validation skipped (TWILIO_AUTH_TOKEN or TWILIO_WEBHOOK_HOST not set)")
         return True

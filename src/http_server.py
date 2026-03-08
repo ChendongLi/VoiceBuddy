@@ -132,8 +132,17 @@ async def handle_twilio_media_ws(request: web.Request) -> web.WebSocketResponse:
     await ws.prepare(request)
 
     # Thin adapter: expose the same send/recv API the websockets library uses
+    import aiohttp as _aiohttp
+
+    remote = request.remote
+
+    class _FakeRequest:
+        path = "/twilio-media"
+
     class _WsAdapter:
-        remote_address = request.remote
+        def __init__(self) -> None:
+            self.remote_address = remote
+            self.request = _FakeRequest()
 
         async def send(self, data: str | bytes) -> None:
             if isinstance(data, bytes):
@@ -146,9 +155,11 @@ async def handle_twilio_media_ws(request: web.Request) -> web.WebSocketResponse:
 
         async def __anext__(self):
             msg = await ws.receive()
-            import aiohttp
-
-            if msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.ERROR, aiohttp.WSMsgType.CLOSED):
+            if msg.type in (
+                _aiohttp.WSMsgType.CLOSE,
+                _aiohttp.WSMsgType.ERROR,
+                _aiohttp.WSMsgType.CLOSED,
+            ):
                 raise StopAsyncIteration
             return msg.data
 
