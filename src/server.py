@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import sys
 import time
 from http import HTTPStatus
@@ -25,6 +26,8 @@ from voice_config import resolve_voice_id
 sys.path.insert(0, str(Path(__file__).parent))
 
 from deepgram_client import DeepgramFluxClient
+from handoff_service import HandoffService
+from intent_detector import detect_handoff_intent
 from latency_logger import LatencyLogger
 from llm_orchestrator import LLMOrchestrator
 from sentence_splitter import SentenceSplitter
@@ -33,6 +36,17 @@ from tts_client import TTSClient
 from vad_detector import VADDetector
 
 logger = logging.getLogger("voicebuddy.server")
+
+# Handoff configuration (override via env vars)
+HANDOFF_FALLBACK_NUMBER = os.environ.get("HANDOFF_FALLBACK_NUMBER", "")
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+HANDOFF_TIMEZONE = os.environ.get("HANDOFF_TIMEZONE", "America/Chicago")
+HANDOFF_BUSINESS_HOURS: dict[str, str] = {
+    "mon_fri": os.environ.get("HANDOFF_HOURS_MON_FRI", "9am-5pm"),
+    "saturday": os.environ.get("HANDOFF_HOURS_SAT", "10am-3pm"),
+    "sunday": os.environ.get("HANDOFF_HOURS_SUN", "closed"),
+}
 
 HTML_PATH = Path(__file__).parent / "static" / "index.html"
 
@@ -359,6 +373,42 @@ async def handle_connection(websocket):
                     logger.info("[%s] Transcript: %r", session_id[:8], transcript)
 
                     if transcript:
+                        # Check for human handoff intent
+                        if detect_handoff_intent(transcript):
+                            logger.info("[%s] Handoff intent detected", session_id[:8])
+                            call_sid = getattr(websocket, "twilio_call_sid", None)
+
+                            if HandoffService.is_within_business_hours(HANDOFF_BUSINESS_HOURS, HANDOFF_TIMEZONE):
+                                if call_sid and HANDOFF_FALLBACK_NUMBER:
+                                    transferred = await HandoffService.initiate_transfer(
+                                        call_sid, HANDOFF_FALLBACK_NUMBER, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
+                                    )
+                                    if transferred:
+                                        msg = "Transferring you to a team member now. Please hold."
+                                    else:
+                                        msg = (
+                                            "I'm sorry, I wasn't able to transfer your call right now. "
+                                            "Please try calling us directly."
+                                        )
+                                else:
+                                    msg = (
+                                        "I'd be happy to connect you with someone. "
+                                        "Please call our office directly and a team member will assist you."
+                                    )
+                            else:
+                                msg = (
+                                    "Our team is currently unavailable. "
+                                    "Our business hours are Monday through Friday, 9 AM to 5 PM, "
+                                    "and Saturday 10 AM to 3 PM. Please call back during those times."
+                                )
+
+                            await websocket.send(json.dumps({"type": "response", "text": msg}))
+                            turn_context_id = f"{session_id[:8]}-{sm.ctx.turn_id}"
+                            tts_queue.put_nowait((msg, turn_context_id))
+                            tts_queue.put_nowait(("__turn_end__", turn_context_id))
+                            sm.handle(Event.LLM_FILLER_READY)
+                            continue
+
                         # Set up context_id for this turn's TTS sentences
                         turn_context_id = f"{session_id[:8]}-{sm.ctx.turn_id}"
                         # Fire LLM processing
