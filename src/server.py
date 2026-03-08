@@ -592,8 +592,15 @@ async def handle_twilio_media(websocket):
 
     def on_end_of_turn(turn_index, transcript, confidence, transcript_received_ms):
         event_queue.put_nowait(
-            ("end_of_turn", {"turn_index": turn_index, "transcript": transcript,
-                             "confidence": confidence, "transcript_received_ms": transcript_received_ms})
+            (
+                "end_of_turn",
+                {
+                    "turn_index": turn_index,
+                    "transcript": transcript,
+                    "confidence": confidence,
+                    "transcript_received_ms": transcript_received_ms,
+                },
+            )
         )
 
     def on_transcript_update(partial_transcript):

@@ -122,7 +122,7 @@ class TestRoundTrip:
         mean_orig = sum(orig) / n
         mean_recv = sum(recv) / n
 
-        num = sum((o - mean_orig) * (r - mean_recv) for o, r in zip(orig, recv))
+        num = sum((o - mean_orig) * (r - mean_recv) for o, r in zip(orig, recv, strict=False))
         den_orig = sum((o - mean_orig) ** 2 for o in orig) ** 0.5
         den_recv = sum((r - mean_recv) ** 2 for r in recv) ** 0.5
 
