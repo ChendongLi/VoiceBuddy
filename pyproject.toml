@@ -56,6 +56,7 @@ indent-style = "space"
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
+addopts = "-m 'not integration'"  # skip integration tests by default; run with -m integration
 markers = [
     "integration: tests that bind real TCP ports and require network",
 ]
