@@ -57,8 +57,13 @@ install_deps() {
   fi
 }
 
-# ── 5. Start Postgres via docker-compose (if compose file exists) ──────────────
+# ── 5. Start Postgres via docker-compose (only if not using SQLite) ────────────
 start_postgres() {
+  local db_url="${DATABASE_URL:-}"
+  if [[ "$db_url" == sqlite* ]]; then
+    info "Using SQLite — no Docker needed. (${db_url})"
+    return
+  fi
   if [[ -f docker-compose.yml ]] && command -v docker &>/dev/null; then
     if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "postgres"; then
       info "Starting Postgres via docker-compose..."
@@ -67,6 +72,9 @@ start_postgres() {
     else
       info "Postgres already running."
     fi
+  else
+    warn "No DATABASE_URL set and no docker-compose.yml found."
+    warn "Tip: set DATABASE_URL=sqlite+aiosqlite:///./voicebuddy_dev.db in .env for zero-setup local dev."
   fi
 }
 
@@ -80,6 +88,14 @@ run_migrations() {
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 cd "$(dirname "$0")"
+
+# Load .env so DATABASE_URL etc. are available to this script
+if [[ -f .env ]]; then
+  set -o allexport
+  # shellcheck disable=SC1091
+  source .env
+  set +o allexport
+fi
 
 info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 info "  VoiceBuddy — Local Dev Runner"

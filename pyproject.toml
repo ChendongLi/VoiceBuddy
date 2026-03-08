@@ -20,6 +20,7 @@ python-dotenv = "^1.2.1"
 pydantic = "^2.12.5"
 silero-vad = "^5.1"
 onnxruntime = "^1.16"
+aiosqlite = "^0.20.0"  # SQLite driver for local dev (no Docker needed)
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
