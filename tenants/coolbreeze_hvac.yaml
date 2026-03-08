@@ -52,7 +52,7 @@ services:
 
 providers:
   - name: CoolBreeze Dispatch
-    calendar_id: null
+    calendar_id: lichendong@gmail.com
 
 buffer_min: 15
 
