@@ -30,6 +30,7 @@ from llm_orchestrator import LLMOrchestrator
 from sentence_splitter import SentenceSplitter
 from state_machine import Event, State, StateMachine
 from tts_client import TTSClient
+from twilio_audio_bridge import TwilioAudioBridge
 from vad_detector import VADDetector
 
 logger = logging.getLogger("voicebuddy.server")
@@ -56,6 +57,8 @@ def process_request(connection, request):
         response.headers["Content-Type"] = "text/html; charset=utf-8"
         return response
     if request.path == "/ws" or request.path.startswith("/ws?"):
+        return None  # proceed with WebSocket upgrade
+    if request.path == "/twilio-media" or request.path.startswith("/twilio-media?"):
         return None  # proceed with WebSocket upgrade
     return connection.respond(HTTPStatus.NOT_FOUND, "Not Found")
 
@@ -558,6 +561,270 @@ async def handle_connection(websocket):
         )
 
 
+async def handle_twilio_media(websocket):
+    """Handle a Twilio MediaStream WebSocket connection.
+
+    Bridges Twilio mulaw 8kHz audio to the existing STT → LLM → TTS pipeline
+    by converting formats on ingress/egress via TwilioAudioBridge.
+    """
+    remote = websocket.remote_address
+    logger.info("Twilio MediaStream connected: %s", remote)
+
+    bridge = TwilioAudioBridge()
+    stream_sid: str | None = None
+    outbound_seq = 0
+
+    # Resolve voice from query param (e.g. /twilio-media?voice=allison)
+    voice_id = resolve_voice_id(websocket.request.path)
+
+    log = LatencyLogger()
+    sm = StateMachine(log)
+    session_id = sm.ctx.session_id
+    event_queue: asyncio.Queue = asyncio.Queue()
+    tts_queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
+
+    log.log_event(session_id, sm.ctx.turn_id, "connection", {"action": "twilio_connected", "remote": str(remote)})
+
+    # --- Deepgram callbacks ---
+
+    def on_start_of_turn(turn_index, ts_ms):
+        event_queue.put_nowait(("start_of_turn", {"turn_index": turn_index, "ts_ms": ts_ms}))
+
+    def on_end_of_turn(turn_index, transcript, confidence, transcript_received_ms):
+        event_queue.put_nowait(
+            ("end_of_turn", {"turn_index": turn_index, "transcript": transcript,
+                             "confidence": confidence, "transcript_received_ms": transcript_received_ms})
+        )
+
+    def on_transcript_update(partial_transcript):
+        event_queue.put_nowait(("transcript_update", {"text": partial_transcript}))
+
+    # --- LLM callbacks ---
+
+    def on_filler_ready(text, ttft_ms):
+        event_queue.put_nowait(("llm_filler_ready", {"text": text, "ttft_ms": ttft_ms}))
+
+    def on_full_ready(text, ttft_ms):
+        event_queue.put_nowait(("llm_full_ready", {"text": text, "ttft_ms": ttft_ms}))
+
+    def on_full_token(token):
+        event_queue.put_nowait(("llm_full_token", {"token": token}))
+
+    # --- Initialize service clients ---
+
+    dg = DeepgramFluxClient(on_start_of_turn, on_end_of_turn, on_transcript_update)
+    llm = LLMOrchestrator()
+    llm.on_filler_ready = on_filler_ready
+    llm.on_full_ready = on_full_ready
+    llm.on_full_token = on_full_token
+
+    tts = TTSClient(voice_id=voice_id)
+
+    # Cancellation state
+    llm_task: asyncio.Task | None = None
+    llm_cancelled = False
+    tts_cancel_event = asyncio.Event()
+
+    # Sentence splitter feeds TTS queue
+    turn_context_id = f"{session_id[:8]}-0"
+
+    def on_sentence(sentence):
+        nonlocal turn_context_id
+        tts_queue.put_nowait((sentence, turn_context_id))
+
+    splitter = SentenceSplitter(on_sentence=on_sentence)
+
+    # --- Connect services ---
+    await dg.connect()
+    await tts.connect()
+
+    # --- Cancel pipeline (barge-in) ---
+
+    async def cancel_pipeline():
+        nonlocal llm_task, llm_cancelled
+        llm_cancelled = True
+
+        if llm_task and not llm_task.done():
+            llm_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await llm_task
+            llm_task = None
+
+        while not tts_queue.empty():
+            try:
+                tts_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+        tts_cancel_event.set()
+        await tts.cancel_current()
+        splitter.discard()
+        llm.mark_interrupted()
+
+        # Send Twilio clear event to stop playback
+        if stream_sid:
+            await websocket.send(json.dumps({"event": "clear", "streamSid": stream_sid}))
+
+    # --- Event processor ---
+
+    async def process_events():
+        nonlocal turn_context_id, llm_task, llm_cancelled
+        while True:
+            event_type, data = await event_queue.get()
+            try:
+                if event_type == "start_of_turn":
+                    current = sm.current_state
+                    barge_in_states = {State.BOT_SPEAKING, State.FILLER_RESPONSE, State.PROCESSING}
+                    if current in barge_in_states:
+                        sm.handle(Event.BARGE_IN_DETECTED)
+                        await cancel_pipeline()
+                        sm.handle(Event.START_OF_TURN)
+                        logger.info("[%s] BARGE-IN (turn %d)", session_id[:8], data["turn_index"])
+                    elif current in {State.IDLE, State.BARGE_IN_DETECTED}:
+                        sm.handle(Event.START_OF_TURN)
+                        logger.info("[%s] START_OF_TURN (turn %d)", session_id[:8], data["turn_index"])
+
+                elif event_type == "end_of_turn":
+                    sm.handle(Event.END_OF_TURN, data=data)
+                    transcript = data["transcript"]
+                    logger.info("[%s] Transcript: %r", session_id[:8], transcript)
+
+                    if transcript:
+                        turn_context_id = f"{session_id[:8]}-{sm.ctx.turn_id}"
+                        llm_cancelled = False
+                        llm_task = asyncio.create_task(llm.process_turn(transcript))
+
+                elif event_type == "llm_filler_ready":
+                    if not llm_cancelled:
+                        sm.handle(Event.LLM_FILLER_READY)
+                        tts_queue.put_nowait((data["text"], turn_context_id))
+
+                elif event_type == "llm_full_token":
+                    if not llm_cancelled:
+                        splitter.feed(data["token"])
+
+                elif event_type == "llm_full_ready":
+                    if not llm_cancelled:
+                        splitter.flush()
+                        tts_queue.put_nowait(("__turn_end__", turn_context_id))
+                        sm.handle(Event.LLM_FULL_READY)
+
+                elif event_type == "tts_first_byte":
+                    sm.handle(Event.TTS_AUDIO_READY)
+
+                elif event_type == "tts_playback_done":
+                    sm.handle(Event.TTS_PLAYBACK_DONE)
+
+            except Exception as e:
+                logger.warning("[%s] Event error: %s — %s", session_id[:8], event_type, e)
+
+    event_task = asyncio.create_task(process_events())
+
+    # --- TTS worker: converts PCM chunks to Twilio media events ---
+
+    async def tts_worker():
+        nonlocal outbound_seq
+        first_byte_of_turn = True
+        while True:
+            item = await tts_queue.get()
+            if item is None:
+                break
+            sentence, context_id = item
+
+            if sentence == "__turn_end__":
+                ts_ms = time.time() * 1000
+                event_queue.put_nowait(("tts_playback_done", {"ts_ms": ts_ms}))
+                # Send a mark so Twilio notifies us when playback finishes
+                if stream_sid:
+                    mark_evt = bridge.make_mark_event(stream_sid, f"turn-{context_id}")
+                    await websocket.send(json.dumps(mark_evt))
+                first_byte_of_turn = True
+                continue
+
+            first_byte = True
+            tts_cancel_event.clear()
+            try:
+                async for audio_chunk in tts.synthesize(sentence, context_id=context_id):
+                    if tts_cancel_event.is_set():
+                        break
+                    if first_byte:
+                        if first_byte_of_turn:
+                            event_queue.put_nowait(("tts_first_byte", {"ts_ms": time.time() * 1000}))
+                            first_byte_of_turn = False
+                        first_byte = False
+
+                    # Convert PCM 16kHz → Twilio mulaw 8kHz and send
+                    if stream_sid:
+                        outbound_seq += 1
+                        media_evt = bridge.pcm_to_twilio(audio_chunk, outbound_seq, stream_sid)
+                        await websocket.send(json.dumps(media_evt))
+            except Exception as e:
+                if not tts_cancel_event.is_set():
+                    logger.warning("[%s] TTS error: %s", session_id[:8], e)
+
+            if tts_cancel_event.is_set():
+                first_byte_of_turn = True
+
+    tts_task = asyncio.create_task(tts_worker())
+
+    # --- Main WebSocket loop (Twilio MediaStream protocol) ---
+
+    try:
+        async for message in websocket:
+            if not isinstance(message, str):
+                continue
+            try:
+                msg = json.loads(message)
+            except json.JSONDecodeError:
+                continue
+
+            event = msg.get("event")
+
+            if event == "start":
+                stream_sid = msg.get("streamSid")
+                logger.info("[%s] Twilio stream started: %s", session_id[:8], stream_sid)
+
+            elif event == "media":
+                payload = msg.get("media", {}).get("payload", "")
+                if payload:
+                    pcm_16k = bridge.twilio_to_pcm(payload)
+                    await dg.send_audio(pcm_16k)
+
+            elif event == "stop":
+                logger.info("[%s] Twilio stream stopped", session_id[:8])
+                break
+
+    except Exception as e:
+        logger.error("[%s] Twilio connection error: %s", session_id[:8], e)
+    finally:
+        tts_queue.put_nowait(None)
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(tts_task, timeout=5.0)
+
+        event_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await event_task
+
+        await dg.close()
+        await tts.close()
+
+        if sm.current_state == State.USER_SPEAKING:
+            sm.handle(Event.END_OF_TURN)
+        if sm.current_state != State.IDLE:
+            sm.handle(Event.RESET)
+
+        logger.info("Twilio MediaStream disconnected: %s", remote)
+
+
+async def dispatch_connection(websocket):
+    """Route WebSocket connections to the appropriate handler based on path."""
+    path = websocket.request.path
+    if path == "/twilio-media" or path.startswith("/twilio-media?"):
+        await handle_twilio_media(websocket)
+    else:
+        await handle_connection(websocket)
+
+
 async def main(host: str = "0.0.0.0", port: int = 8765):
     """Start the VoiceBuddy server."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -577,7 +844,7 @@ async def main(host: str = "0.0.0.0", port: int = 8765):
     except Exception as _e:
         logger.warning("VAD pre-load failed (non-fatal): %s", _e)
 
-    async with serve(handle_connection, host, port, process_request=process_request) as server:
+    async with serve(dispatch_connection, host, port, process_request=process_request) as server:
         await server.serve_forever()
 
 
