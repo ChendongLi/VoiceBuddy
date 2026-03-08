@@ -1,10 +1,13 @@
 """
 Simple test to verify microphone audio source works.
+Requires real microphone hardware — run with: pytest -m integration
 """
 
 import asyncio
 import sys
 from pathlib import Path
+
+import pytest
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -12,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from audio_sources import MicrophoneAudioSource
 
 
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_mic():
     """Test microphone capture."""
     print("Testing microphone capture...")
