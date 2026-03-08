@@ -32,6 +32,7 @@ class LLMOrchestrator:
         self.client = AsyncAnthropic(api_key=os.environ.get("CLAUDE_API_KEY"))
         self.conversation_history: list[dict] = []
         self._current_partial_text = ""
+        self.system_prompt_extra: str | None = None
 
         # Callbacks (synchronous — push to event queue)
         self.on_filler_ready: Callable[[str, float], None] | None = None
@@ -81,10 +82,13 @@ class LLMOrchestrator:
         ttft_ms = 0.0
 
         # Prompt caching: cache_control on the system text block
+        prompt = SYSTEM_PROMPT
+        if self.system_prompt_extra:
+            prompt = f"{prompt}\n\n{self.system_prompt_extra}"
         system_blocks = [
             {
                 "type": "text",
-                "text": SYSTEM_PROMPT,
+                "text": prompt,
                 "cache_control": {"type": "ephemeral"},
             }
         ]

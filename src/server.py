@@ -27,6 +27,9 @@ from voice_config import resolve_voice_id
 # Make src importable when running as `python src/server.py`
 sys.path.insert(0, str(Path(__file__).parent))
 
+from call_service import CallService
+from customer_service import CustomerService
+from database import async_session
 from handoff_service import HandoffService
 from intent_detector import detect_handoff_intent
 
@@ -51,6 +54,8 @@ HANDOFF_BUSINESS_HOURS: dict[str, str] = {
     "saturday": os.environ.get("HANDOFF_HOURS_SAT", "10am-3pm"),
     "sunday": os.environ.get("HANDOFF_HOURS_SUN", "closed"),
 }
+
+tenant_registry: TenantRegistry | None = None
 
 HTML_PATH = Path(__file__).parent / "static" / "index.html"
 
@@ -638,9 +643,13 @@ async def handle_twilio_media(websocket):
     bridge = TwilioAudioBridge()
     stream_sid: str | None = None
     outbound_seq = 0
+    call_id: str | None = None
 
     # Resolve voice from query param (e.g. /twilio-media?voice=allison)
     voice_id = resolve_voice_id(websocket.request.path)
+
+    customer_svc = CustomerService()
+    call_svc = CallService()
 
     log = LatencyLogger()
     sm = StateMachine(log)
@@ -854,7 +863,45 @@ async def handle_twilio_media(websocket):
 
             if event == "start":
                 stream_sid = msg.get("streamSid")
+                start_data = msg.get("start", {})
+                twilio_call_sid = start_data.get("callSid", "")
+                custom_params = start_data.get("customParameters", {})
+                caller_number = custom_params.get("from", "")
+                called_number = custom_params.get("to", "")
                 logger.info("[%s] Twilio stream started: %s", session_id[:8], stream_sid)
+
+                # Customer lookup + call record
+                if caller_number and called_number:
+                    tenant_cfg = tenant_registry.get_by_phone(called_number)
+                    if tenant_cfg:
+                        try:
+                            async with async_session() as db:
+                                customer, is_new = await customer_svc.get_or_create(
+                                    db, tenant_cfg.tenant_id, caller_number
+                                )
+                                appointment = await customer_svc.get_upcoming_appointment(
+                                    db, customer.id
+                                )
+                                customer_context = customer_svc.build_customer_context(
+                                    customer, appointment
+                                )
+                                call_record = await call_svc.start_call(
+                                    db, tenant_cfg.tenant_id, customer.id,
+                                    twilio_call_sid, caller_number,
+                                )
+                                call_id = str(call_record.id)
+
+                            # Inject customer context into LLM system prompt
+                            llm.system_prompt_extra = customer_context
+                            logger.info(
+                                "[%s] Customer %s (%s): %s",
+                                session_id[:8],
+                                customer.id,
+                                "new" if is_new else "returning",
+                                customer_context,
+                            )
+                        except Exception as e:
+                            logger.warning("[%s] Customer lookup failed: %s", session_id[:8], e)
 
             elif event == "media":
                 payload = msg.get("media", {}).get("payload", "")
@@ -904,6 +951,7 @@ async def main(host: str = "0.0.0.0", port: int = 8765):
     logger.info("Open http://%s:%d/ in your browser", host, port)
 
     # Load tenant configs from tenants/*.yaml
+    global tenant_registry
     tenant_registry = TenantRegistry()
     logger.info("Loaded %d tenant(s)", len(tenant_registry.all_tenants))
 
