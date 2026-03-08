@@ -46,7 +46,7 @@ $RESULT"
 
 ## Practical Example Flow
 ```
-You (Telegram):  "VoiceBuddy: fix the audio buffer overflow in the 
+You (Telegram):  "VoiceBuddy: fix the audio buffer overflow in the
                   ElevenLabs streaming handler"
 
 Bot (immediate): 🚀 VoiceBuddy — Starting task:
