@@ -86,7 +86,7 @@ async def main():
 
         # Set up microphone
         mic = MicrophoneAudioSource(sample_rate=SAMPLE_RATE, channels=1, dtype="int16")
-        print(f"Audio: {mic.get_channels()}ch, {mic.get_sample_width()*8}bit, {mic.get_sample_rate()}Hz")
+        print(f"Audio: {mic.get_channels()}ch, {mic.get_sample_width() * 8}bit, {mic.get_sample_rate()}Hz")
 
         # Pass API key explicitly to avoid reliance on import-time default
         client = AsyncDeepgramClient(api_key=os.environ["DEEPGRAM_API_KEY"])

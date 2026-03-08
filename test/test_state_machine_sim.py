@@ -410,9 +410,9 @@ def test_all_transitions_covered(tmp_path: Path):
         test_sm = make_sm(tmp_path)
         test_sm.current_state = from_state
         result = test_sm.handle(event)
-        assert (
-            result == to_state
-        ), f"Transition ({from_state.name}, {event.name}) expected {to_state.name}, got {result.name}"
+        assert result == to_state, (
+            f"Transition ({from_state.name}, {event.name}) expected {to_state.name}, got {result.name}"
+        )
 
 
 # ---------------------------------------------------------------------------
