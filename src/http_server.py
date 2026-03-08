@@ -23,8 +23,15 @@ logger = logging.getLogger("voicebuddy.http")
 
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "8766"))
 
-# Shared circuit breaker registry — importable by server.py to record failures
+# Shared registries — set by server.py at startup to avoid circular imports
 circuit_breaker_registry = CircuitBreakerRegistry()
+_tenant_registry = None  # set via set_tenant_registry()
+
+
+def set_tenant_registry(registry: object) -> None:
+    """Called by server.py after TenantRegistry is built."""
+    global _tenant_registry
+    _tenant_registry = registry
 
 
 class _TwilioRequest:
@@ -48,8 +55,27 @@ async def handle_incoming_call(request: web.Request) -> web.Response:
         logger.warning("Invalid Twilio signature on /incoming-call")
         return web.Response(status=403, text="Invalid signature")
 
+    # Parse form params from already-read body to avoid double-read
+    from urllib.parse import parse_qs
+
+    parsed = parse_qs(body.decode("utf-8", errors="replace"))
+    # URL form encoding turns '+' into ' ' — normalize back to E.164
+    to_number = (parsed.get("To", [""])[0]).replace(" ", "+")
+    if _tenant_registry is not None and to_number:
+        tenant = _tenant_registry.get_by_phone(to_number)
+        if tenant is None:
+            logger.warning("Unknown To number: %s — rejecting call", to_number)
+            reject_twiml = (
+                '<?xml version="1.0" encoding="UTF-8"?><Response><Reject reason="unallocated-number"/></Response>'
+            )
+            return web.Response(status=200, text=reject_twiml, content_type="application/xml")
+
     twiml = build_twiml_response()
-    logger.info("Incoming call → TwiML (host=%s)", os.environ.get("TWILIO_WEBHOOK_HOST", "localhost"))
+    logger.info(
+        "Incoming call → TwiML for %s (host=%s)",
+        to_number,
+        os.environ.get("TWILIO_WEBHOOK_HOST", "localhost"),
+    )
     return web.Response(
         status=200,
         text=twiml,
@@ -59,9 +85,18 @@ async def handle_incoming_call(request: web.Request) -> web.Response:
 
 async def handle_health(request: web.Request) -> web.Response:
     """GET /health — liveness probe with per-tenant circuit breaker status."""
+    tenants = {}
+    if _tenant_registry is not None:
+        for t in _tenant_registry.all_tenants:
+            cb = circuit_breaker_registry.get(t.tenant_id)
+            tenants[t.tenant_id] = {
+                "phone": t.phone_number,
+                "circuit_breaker": cb.snapshot()["state"],
+            }
     body = json.dumps(
         {
             "status": "ok",
+            "tenants": tenants,
             "circuit_breakers": circuit_breaker_registry.all_snapshots(),
         }
     )
