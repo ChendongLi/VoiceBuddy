@@ -1,4 +1,6 @@
 """
+DEPRECATED: Hardcoded prompts — use tenants/*.yaml via TenantRegistry instead (AGE-12).
+
 System prompt constants for VoiceBuddy LLM orchestration.
 
 These must remain identical between turns so Anthropic's prompt caching
