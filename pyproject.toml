@@ -20,6 +20,9 @@ python-dotenv = "^1.2.1"
 pydantic = "^2.12.5"
 silero-vad = "^5.1"
 onnxruntime = "^1.16"
+sqlalchemy = {version = "^2.0", extras = ["asyncio"]}
+asyncpg = "^0.31"
+alembic = "^1.16"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0.0"
