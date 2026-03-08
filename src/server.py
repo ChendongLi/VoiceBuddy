@@ -19,6 +19,7 @@ from pathlib import Path
 
 from websockets.asyncio.server import serve
 
+from tenant_config import TenantRegistry
 from voice_config import resolve_voice_id
 
 # Make src importable when running as `python src/server.py`
@@ -563,6 +564,10 @@ async def main(host: str = "0.0.0.0", port: int = 8765):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logger.info("Starting VoiceBuddy server on ws://%s:%d", host, port)
     logger.info("Open http://%s:%d/ in your browser", host, port)
+
+    # Load tenant configs from tenants/*.yaml
+    tenant_registry = TenantRegistry()
+    logger.info("Loaded %d tenant(s)", len(tenant_registry.all_tenants))
 
     # Pre-warm Silero VAD model so the first WebSocket connection doesn't pay
     # the ONNX session-creation cost. Each VADDetector still gets its own
