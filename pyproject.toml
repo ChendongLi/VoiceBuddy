@@ -19,6 +19,7 @@ pydub = "^0.25.1"
 python-dotenv = "^1.2.1"
 pydantic = "^2.12.5"
 silero-vad = "^5.1"
+twilio = "^9.0"
 onnxruntime = "^1.16"
 
 [tool.poetry.group.dev.dependencies]
