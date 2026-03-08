@@ -9,7 +9,6 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import sys
@@ -22,7 +21,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from twilio_handler import build_twiml_response, handle_twilio_media
-
 
 # ---------------------------------------------------------------------------
 # TwiML generation
@@ -143,31 +141,35 @@ class FakeWebSocket:
 
 
 def _media_event(payload_bytes: bytes, sequence: int = 1) -> str:
-    return json.dumps({
-        "event": "media",
-        "sequenceNumber": str(sequence),
-        "media": {
-            "track": "inbound",
-            "chunk": str(sequence),
-            "timestamp": str(sequence * 20),
-            "payload": base64.b64encode(payload_bytes).decode(),
-        },
-    })
+    return json.dumps(
+        {
+            "event": "media",
+            "sequenceNumber": str(sequence),
+            "media": {
+                "track": "inbound",
+                "chunk": str(sequence),
+                "timestamp": str(sequence * 20),
+                "payload": base64.b64encode(payload_bytes).decode(),
+            },
+        }
+    )
 
 
 CONNECTED_EVENT = json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"})
 
-START_EVENT = json.dumps({
-    "event": "start",
-    "sequenceNumber": "1",
-    "streamSid": "MZ-stream-123",
-    "start": {
-        "callSid": "CA-call-456",
-        "accountSid": "AC-account-789",
-        "customParameters": {"from": "+15551234567", "to": "+15559876543"},
-        "mediaFormat": {"encoding": "audio/x-mulaw", "sampleRate": 8000, "channels": 1},
-    },
-})
+START_EVENT = json.dumps(
+    {
+        "event": "start",
+        "sequenceNumber": "1",
+        "streamSid": "MZ-stream-123",
+        "start": {
+            "callSid": "CA-call-456",
+            "accountSid": "AC-account-789",
+            "customParameters": {"from": "+15551234567", "to": "+15559876543"},
+            "mediaFormat": {"encoding": "audio/x-mulaw", "sampleRate": 8000, "channels": 1},
+        },
+    }
+)
 
 STOP_EVENT = json.dumps({"event": "stop", "sequenceNumber": "5", "streamSid": "MZ-stream-123"})
 
