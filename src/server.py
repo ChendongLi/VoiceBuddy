@@ -18,9 +18,8 @@ import time
 from http import HTTPStatus
 from pathlib import Path
 
-from websockets.asyncio.server import serve
-
 from sqlalchemy import select
+from websockets.asyncio.server import serve
 
 from http_server import start_http_server
 from tenant_config import TenantConfig, TenantRegistry
@@ -30,13 +29,12 @@ from voice_config import resolve_voice_id
 sys.path.insert(0, str(Path(__file__).parent))
 
 from database import async_session
+from deepgram_client import DeepgramFluxClient
 from handoff_service import HandoffService
 from intent_detector import detect_handoff_intent
-from post_call_service import PostCallService
-
-from deepgram_client import DeepgramFluxClient
 from latency_logger import LatencyLogger
 from llm_orchestrator import LLMOrchestrator
+from post_call_service import PostCallService
 from sentence_splitter import SentenceSplitter
 from state_machine import Event, State, StateMachine
 from tts_client import TTSClient
@@ -906,9 +904,7 @@ async def handle_twilio_media(websocket):
         if full_transcript and call_sid and called_number:
             tenant_config = tenant_registry.get_by_phone(called_number)
             if tenant_config:
-                asyncio.create_task(
-                    _run_post_call(call_sid, full_transcript, tenant_config, caller_number)
-                )
+                asyncio.create_task(_run_post_call(call_sid, full_transcript, tenant_config, caller_number))
 
         logger.info("Twilio MediaStream disconnected: %s", remote)
 
