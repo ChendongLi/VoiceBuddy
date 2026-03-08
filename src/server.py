@@ -27,10 +27,10 @@ from voice_config import resolve_voice_id
 # Make src importable when running as `python src/server.py`
 sys.path.insert(0, str(Path(__file__).parent))
 
-from handoff_service import HandoffService
-from intent_detector import detect_handoff_intent
-
 from deepgram_client import DeepgramFluxClient
+from handoff_service import HandoffService
+from http_server import circuit_breaker_registry
+from intent_detector import detect_handoff_intent
 from latency_logger import LatencyLogger
 from llm_orchestrator import LLMOrchestrator
 from sentence_splitter import SentenceSplitter
@@ -638,6 +638,8 @@ async def handle_twilio_media(websocket):
     bridge = TwilioAudioBridge()
     stream_sid: str | None = None
     outbound_seq = 0
+    call_had_booking = False
+    tenant_id: str | None = None
 
     # Resolve voice from query param (e.g. /twilio-media?voice=allison)
     voice_id = resolve_voice_id(websocket.request.path)
@@ -864,6 +866,15 @@ async def handle_twilio_media(websocket):
 
             elif event == "stop":
                 logger.info("[%s] Twilio stream stopped", session_id[:8])
+                if not call_had_booking:
+                    logger.warning(
+                        "call_drop_detected session=%s tenant=%s turns=%d",
+                        session_id[:8],
+                        tenant_id or "unknown",
+                        sm.ctx.turn_id,
+                    )
+                    if tenant_id:
+                        circuit_breaker_registry.get(tenant_id).record_failure()
                 break
 
     except Exception as e:

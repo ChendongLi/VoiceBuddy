@@ -10,16 +10,21 @@ Default port: 8766 (configurable via HTTP_PORT env var)
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 
 from aiohttp import web
 
+from circuit_breaker import CircuitBreakerRegistry
 from twilio_handler import _validate_twilio_signature, build_twiml_response
 
 logger = logging.getLogger("voicebuddy.http")
 
 HTTP_PORT = int(os.environ.get("HTTP_PORT", "8766"))
+
+# Shared circuit breaker registry — importable by server.py to record failures
+circuit_breaker_registry = CircuitBreakerRegistry()
 
 
 class _TwilioRequest:
@@ -53,8 +58,14 @@ async def handle_incoming_call(request: web.Request) -> web.Response:
 
 
 async def handle_health(request: web.Request) -> web.Response:
-    """GET /health — liveness probe for the HTTP server."""
-    return web.Response(text='{"status":"ok"}', content_type="application/json")
+    """GET /health — liveness probe with per-tenant circuit breaker status."""
+    body = json.dumps(
+        {
+            "status": "ok",
+            "circuit_breakers": circuit_breaker_registry.all_snapshots(),
+        }
+    )
+    return web.Response(text=body, content_type="application/json")
 
 
 def create_app() -> web.Application:
