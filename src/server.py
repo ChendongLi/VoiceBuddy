@@ -751,7 +751,7 @@ async def handle_twilio_media(websocket):
     # --- Event processor ---
 
     async def process_events():
-        nonlocal turn_context_id, llm_task, llm_cancelled
+        nonlocal turn_context_id, llm_task, llm_cancelled, turn_tokens_streamed
         while True:
             event_type, data = await event_queue.get()
             try:
@@ -785,11 +785,19 @@ async def handle_twilio_media(websocket):
 
                 elif event_type == "llm_full_token":
                     if not llm_cancelled:
+                        turn_tokens_streamed += 1
                         splitter.feed(data["token"])
 
                 elif event_type == "llm_full_ready":
                     if not llm_cancelled:
                         splitter.flush()
+                        full_text = data.get("text", "")
+                        # Non-streaming LLM (tool use) fires no llm_full_token events.
+                        # Queue the full response text directly so TTS actually speaks it.
+                        if turn_tokens_streamed == 0 and full_text:
+                            logger.info("[%s] Non-streaming response → TTS: %r", session_id[:8], full_text[:80])
+                            tts_queue.put_nowait((full_text, turn_context_id))
+                        turn_tokens_streamed = 0
                         tts_queue.put_nowait(("__turn_end__", turn_context_id))
                         sm.handle(Event.LLM_FULL_READY)
 
@@ -802,6 +810,7 @@ async def handle_twilio_media(websocket):
             except Exception as e:
                 logger.warning("[%s] Event error: %s — %s", session_id[:8], event_type, e)
 
+    turn_tokens_streamed = 0
     event_task = asyncio.create_task(process_events())
 
     # --- TTS worker: converts PCM chunks to Twilio media events ---
