@@ -222,8 +222,8 @@ async def test_log_file_written(tmp_path, monkeypatch):
 
     # Find the state transition and verify it's IDLE -> USER_SPEAKING
     state_events = [e for e in events if e["event_type"] == "state"]
-    assert any(e["data"]["from_state"] == "IDLE" and e["data"]["to_state"] == "USER_SPEAKING" for e in state_events), (
-        "Should have IDLE -> USER_SPEAKING transition"
-    )
+    assert any(
+        e["data"]["from_state"] == "IDLE" and e["data"]["to_state"] == "USER_SPEAKING" for e in state_events
+    ), "Should have IDLE -> USER_SPEAKING transition"
 
     print(f"Log contains {len(events)} events: {event_types}")
