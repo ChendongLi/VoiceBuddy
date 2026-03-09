@@ -53,7 +53,10 @@ async def test_get_credentials_returns_creds(service: CalendarService) -> None:
 
 @pytest.mark.asyncio(loop_scope="function")
 async def test_get_credentials_missing_tenant(service: CalendarService) -> None:
-    creds = await service.get_credentials("nonexistent")
+    # When no tenant token AND no shared SA key, returns None
+    with patch("calendar_service.SA_KEY_PATH") as mock_sa_path:
+        mock_sa_path.exists.return_value = False
+        creds = await service.get_credentials("nonexistent")
     assert creds is None
 
 

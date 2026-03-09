@@ -30,6 +30,7 @@ def _make_tenant(**overrides) -> TenantConfig:
         "voice_id": "abc",
         "fallback_number": "+19999999999",
         "business_hours": {"mon_fri": "9am-5pm"},
+        "timezone": "UTC",
     }
     defaults.update(overrides)
     return TenantConfig(**defaults)

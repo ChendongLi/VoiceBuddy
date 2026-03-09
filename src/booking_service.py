@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+import zoneinfo
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
@@ -89,6 +90,7 @@ class BookingService:
             date_=target_date,
             duration_min=duration_min,
             buffer_min=self.tenant.buffer_min,
+            timezone=self.tenant.timezone,
         )
 
         if not slots:
@@ -120,8 +122,11 @@ class BookingService:
         calendar_id = (provider or {}).get("calendar_id") or "primary"
         provider_display = (provider or {}).get("name", "")
 
+        tz = zoneinfo.ZoneInfo(self.tenant.timezone)
         try:
-            start_dt = datetime.fromisoformat(f"{date_str}T{time_str}:00+00:00")
+            # Parse as naive local time, then attach tenant timezone
+            naive_start = datetime.fromisoformat(f"{date_str}T{time_str}:00")
+            start_dt = naive_start.replace(tzinfo=tz)
         except ValueError:
             return f"Invalid date/time: '{date_str} {time_str}'. Use YYYY-MM-DD and HH:MM."
 
@@ -139,6 +144,7 @@ class BookingService:
             end_dt=end_dt,
             attendee_email=customer_email,
             description=notes,
+            timezone=self.tenant.timezone,
         )
 
         appointment = Appointment(
@@ -192,8 +198,9 @@ class BookingService:
         if appointment.status == "cancelled":
             return "Cannot reschedule a cancelled appointment."
 
+        tz = zoneinfo.ZoneInfo(self.tenant.timezone)
         try:
-            new_start = datetime.fromisoformat(f"{new_date}T{new_time}:00+00:00")
+            new_start = datetime.fromisoformat(f"{new_date}T{new_time}:00").replace(tzinfo=tz)
         except ValueError:
             return f"Invalid date/time: '{new_date} {new_time}'. Use YYYY-MM-DD and HH:MM."
 
@@ -217,6 +224,7 @@ class BookingService:
             summary=summary,
             start_dt=new_start,
             end_dt=new_end,
+            timezone=self.tenant.timezone,
         )
 
         # Update DB

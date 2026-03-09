@@ -33,6 +33,7 @@ class TenantConfig:
     voice_id: str
     fallback_number: str
     business_hours: dict  # {mon_fri, saturday, sunday}
+    timezone: str  # IANA timezone, e.g. "America/Vancouver"
 
 
 class TenantRegistry:
@@ -66,6 +67,7 @@ class TenantRegistry:
                     voice_id=data["voice_id"],
                     fallback_number=data.get("fallback_number", ""),
                     business_hours=data.get("business_hours", {}),
+                    timezone=data.get("timezone", "UTC"),
                 )
                 self._by_phone[tenant.phone_number] = tenant
                 self._by_id[tenant.tenant_id] = tenant

@@ -1,9 +1,15 @@
 """
-Lightweight aiohttp HTTP server for Twilio webhooks.
+Lightweight aiohttp HTTP server for Twilio webhooks + WebSocket media.
 
 Runs alongside the websockets server in the same asyncio event loop.
-Handles POST /incoming-call only — all WebSocket connections go to the
-websockets server (src/server.py).
+Handles:
+  POST /incoming-call  — Twilio webhook, returns TwiML
+  GET  /twilio-media   — WebSocket upgrade for Twilio MediaStream
+  GET  /health         — liveness probe
+
+Single-port design: ngrok only needs to expose HTTP_PORT (8766).
+TWILIO_WEBHOOK_HOST should be set to the public ngrok/Cloud Run host so
+TwiML <Stream> URL points to the right place.
 
 Default port: 8766 (configurable via HTTP_PORT env var)
 """
@@ -18,6 +24,16 @@ from aiohttp import web
 
 from circuit_breaker import CircuitBreakerRegistry
 from twilio_handler import _validate_twilio_signature, build_twiml_response
+
+# Injected by server.py to avoid circular import
+_handle_twilio_media_fn = None  # set via set_twilio_media_handler()
+
+
+def set_twilio_media_handler(fn) -> None:
+    """Called by server.py to wire in the Twilio MediaStream handler."""
+    global _handle_twilio_media_fn
+    _handle_twilio_media_fn = fn
+
 
 logger = logging.getLogger("voicebuddy.http")
 
@@ -103,9 +119,58 @@ async def handle_health(request: web.Request) -> web.Response:
     return web.Response(text=body, content_type="application/json")
 
 
+async def handle_twilio_media_ws(request: web.Request) -> web.WebSocketResponse:
+    """GET /twilio-media — WebSocket endpoint for Twilio MediaStream.
+
+    Wraps the existing handle_twilio_media() function with an aiohttp-to-websockets
+    adapter so both servers share the same business logic.
+    """
+    if _handle_twilio_media_fn is None:
+        return web.Response(status=503, text="Media handler not ready")
+
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
+    # Thin adapter: expose the same send/recv API the websockets library uses
+    import aiohttp as _aiohttp
+
+    remote = request.remote
+
+    class _FakeRequest:
+        path = "/twilio-media"
+
+    class _WsAdapter:
+        def __init__(self) -> None:
+            self.remote_address = remote
+            self.request = _FakeRequest()
+
+        async def send(self, data: str | bytes) -> None:
+            if isinstance(data, bytes):
+                await ws.send_bytes(data)
+            else:
+                await ws.send_str(data)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            msg = await ws.receive()
+            if msg.type in (
+                _aiohttp.WSMsgType.CLOSE,
+                _aiohttp.WSMsgType.ERROR,
+                _aiohttp.WSMsgType.CLOSED,
+            ):
+                raise StopAsyncIteration
+            return msg.data
+
+    await _handle_twilio_media_fn(_WsAdapter())
+    return ws
+
+
 def create_app() -> web.Application:
     app = web.Application()
     app.router.add_post("/incoming-call", handle_incoming_call)
+    app.router.add_get("/twilio-media", handle_twilio_media_ws)
     app.router.add_get("/health", handle_health)
     return app
 

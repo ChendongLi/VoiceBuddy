@@ -28,12 +28,12 @@ from twilio_handler import build_twiml_response, handle_twilio_media
 
 
 class TestBuildTwiml:
-    @patch("twilio_handler.TWILIO_WEBHOOK_HOST", "example.ngrok.io")
+    @patch.dict("os.environ", {"TWILIO_WEBHOOK_HOST": "example.ngrok.io"})
     def test_contains_stream_url(self):
         twiml = build_twiml_response()
         assert 'url="wss://example.ngrok.io/twilio-media"' in twiml
 
-    @patch("twilio_handler.TWILIO_WEBHOOK_HOST", "example.ngrok.io")
+    @patch.dict("os.environ", {"TWILIO_WEBHOOK_HOST": "example.ngrok.io"})
     def test_is_valid_xml_structure(self):
         twiml = build_twiml_response()
         assert twiml.startswith('<?xml version="1.0"')
@@ -42,7 +42,7 @@ class TestBuildTwiml:
         assert "<Stream" in twiml
         assert "</Response>" in twiml
 
-    @patch("twilio_handler.TWILIO_WEBHOOK_HOST", "my-host.com")
+    @patch.dict("os.environ", {"TWILIO_WEBHOOK_HOST": "my-host.com"})
     def test_uses_configured_host(self):
         twiml = build_twiml_response()
         assert "my-host.com" in twiml
@@ -87,6 +87,7 @@ class TestIncomingCallHandler:
 
     @patch("twilio_handler.TWILIO_AUTH_TOKEN", "test-token-123")
     @patch("twilio_handler.TWILIO_WEBHOOK_HOST", "example.ngrok.io")
+    @patch.dict("os.environ", {"SKIP_TWILIO_VALIDATION": "", "TWILIO_WEBHOOK_HOST": "example.ngrok.io"})
     @patch("twilio_handler.RequestValidator")
     def test_invalid_signature_returns_403(self, mock_validator_cls):
         from twilio_handler import handle_incoming_call
