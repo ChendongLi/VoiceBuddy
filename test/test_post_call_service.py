@@ -35,6 +35,7 @@ def _make_tenant_config():
         voice_id="test-voice",
         fallback_number="",
         business_hours={},
+        timezone="UTC",
     )
 
 

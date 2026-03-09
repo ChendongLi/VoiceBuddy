@@ -34,6 +34,7 @@ TENANT_CFG = TenantConfig(
     voice_id="test-voice",
     fallback_number="+10000000000",
     business_hours={"mon_fri": "8am-6pm", "saturday": "9am-2pm", "sunday": "closed"},
+    timezone="America/Vancouver",
 )
 
 

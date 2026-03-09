@@ -12,7 +12,8 @@ Service account is recommended for production (no consent screen needed).
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime, timedelta
+import zoneinfo
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from google.auth.transport.requests import Request
@@ -80,11 +81,13 @@ class CalendarService:
         date_: date,
         duration_min: int,
         buffer_min: int = 15,
+        timezone: str = "UTC",
     ) -> list[dict]:
         """Return open slots on *date_* for *duration_min*-minute appointments.
 
         Uses the freebusy API to find gaps in the calendar, then slices them
         into bookable windows separated by *buffer_min*.
+        Slots are expressed in *timezone* (IANA name, e.g. "America/Vancouver").
         """
         creds = await self.get_credentials(tenant_id)
         if creds is None:
@@ -92,8 +95,9 @@ class CalendarService:
 
         service = build("calendar", "v3", credentials=creds)
 
-        day_start = datetime(date_.year, date_.month, date_.day, 8, 0, tzinfo=UTC)
-        day_end = datetime(date_.year, date_.month, date_.day, 18, 0, tzinfo=UTC)
+        tz = zoneinfo.ZoneInfo(timezone)
+        day_start = datetime(date_.year, date_.month, date_.day, 8, 0, tzinfo=tz)
+        day_end = datetime(date_.year, date_.month, date_.day, 18, 0, tzinfo=tz)
 
         body = {
             "timeMin": day_start.isoformat(),
@@ -141,6 +145,7 @@ class CalendarService:
         end_dt: datetime,
         attendee_email: str | None = None,
         description: str = "",
+        timezone: str = "UTC",
     ) -> str:
         """Create a calendar event and return its event_id."""
         creds = await self.get_credentials(tenant_id)
@@ -152,8 +157,8 @@ class CalendarService:
         event_body: dict = {
             "summary": summary,
             "description": description,
-            "start": {"dateTime": start_dt.isoformat(), "timeZone": "UTC"},
-            "end": {"dateTime": end_dt.isoformat(), "timeZone": "UTC"},
+            "start": {"dateTime": start_dt.isoformat(), "timeZone": timezone},
+            "end": {"dateTime": end_dt.isoformat(), "timeZone": timezone},
         }
         if attendee_email:
             event_body["attendees"] = [{"email": attendee_email}]

@@ -54,6 +54,8 @@ providers:
   - name: CoolBreeze Dispatch
     calendar_id: lichendong@gmail.com
 
+timezone: America/Vancouver
+
 buffer_min: 15
 
 cancellation_policy: "Please provide 24 hours notice to cancel or reschedule."
