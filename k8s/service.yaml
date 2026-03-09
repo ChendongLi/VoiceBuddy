@@ -10,7 +10,11 @@ spec:
     app: voicebuddy
   type: NodePort
   ports:
-    - name: http
+    - name: http-twilio
       protocol: TCP
       port: 80
-      targetPort: 8765
+      targetPort: 8766   # aiohttp: /incoming-call, /twilio-media, /health
+    - name: ws-browser
+      protocol: TCP
+      port: 8765
+      targetPort: 8765   # websockets: browser UI /ws

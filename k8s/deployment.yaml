@@ -16,12 +16,27 @@ spec:
         app: voicebuddy
     spec:
       serviceAccountName: voicebuddy-sa
+      volumes:
+        - name: calendar-sa-key
+          secret:
+            secretName: voicebuddy-calendar-sa
+            items:
+              - key: service_account.json
+                path: calendar_service_account.json
       containers:
         - name: voicebuddy
           image: us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy:latest
           ports:
-            - containerPort: 8765
+            - name: ws
+              containerPort: 8765
               protocol: TCP
+            - name: http
+              containerPort: 8766
+              protocol: TCP
+          volumeMounts:
+            - name: calendar-sa-key
+              mountPath: /app/tokens
+              readOnly: true
           resources:
             requests:
               cpu: "200m"
@@ -51,15 +66,38 @@ spec:
                   name: voicebuddy-secrets
                   key: CARTESIA_VOICE_ID
                   optional: true
+            - name: TWILIO_ACCOUNT_SID
+              valueFrom:
+                secretKeyRef:
+                  name: voicebuddy-secrets
+                  key: TWILIO_ACCOUNT_SID
+            - name: TWILIO_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: voicebuddy-secrets
+                  key: TWILIO_AUTH_TOKEN
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: voicebuddy-secrets
+                  key: DATABASE_URL
+            - name: TWILIO_WEBHOOK_HOST
+              value: "voicebuddy.agentlens.net"
+            - name: HTTP_PORT
+              value: "8766"
+            - name: SERVER_HOST
+              value: "0.0.0.0"
           readinessProbe:
-            tcpSocket:
-              port: 8765
+            httpGet:
+              path: /health
+              port: 8766
             initialDelaySeconds: 15
             periodSeconds: 15
             failureThreshold: 3
           livenessProbe:
-            tcpSocket:
-              port: 8765
+            httpGet:
+              path: /health
+              port: 8766
             initialDelaySeconds: 30
             periodSeconds: 30
             failureThreshold: 3
