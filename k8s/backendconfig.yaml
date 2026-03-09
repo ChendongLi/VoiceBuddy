@@ -7,3 +7,11 @@ spec:
   timeoutSec: 3600          # 1-hour max WebSocket session (GCE LB default is 30s)
   connectionDraining:
     drainingTimeoutSec: 30  # graceful pod drain on deploy/scale
+  healthCheck:
+    checkIntervalSec: 15
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 2
+    type: HTTP
+    requestPath: /health
+    port: 8766
