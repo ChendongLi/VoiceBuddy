@@ -9,3 +9,19 @@ silero-vad>=5.1
 onnxruntime>=1.16
 torch==2.1.2+cpu
 torchaudio==2.1.2+cpu
+# Database
+sqlalchemy>=2.0
+asyncpg>=0.29
+aiosqlite>=0.20
+alembic>=1.13
+# HTTP server (Twilio webhooks)
+aiohttp>=3.9
+# Twilio
+twilio>=9.0
+# Google Calendar
+google-api-python-client>=2.100
+google-auth-httplib2>=0.2
+google-auth-oauthlib>=1.1
+# Misc
+pyyaml>=6.0
+pytz>=2024.1
