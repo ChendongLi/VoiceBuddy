@@ -11,13 +11,11 @@ import sys
 from pathlib import Path
 from textwrap import dedent
 
-import pytest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from tenant_config import TenantConfig, TenantRegistry
-
 
 # ---------------------------------------------------------------------------
 # TenantConfig greeting field
