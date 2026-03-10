@@ -200,3 +200,86 @@ async def test_llm_booking_flow_and_calendar_event(calendar_service, tenant, tom
     # Cleanup
     for e in test_events:
         svc.events().delete(calendarId=CALENDAR_ID, eventId=e["id"]).execute()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_booking_pipeline_creates_calendar_event(tomorrow):
+    """
+    Mirrors the production Twilio call flow in server.py:
+      - Load tenant config from YAML via TenantRegistry
+      - Wire CalendarService + BookingService + LLMOrchestrator exactly as server.py does
+      - Process a booking utterance and verify calendar event creation
+    """
+    from googleapiclient.discovery import build
+
+    from booking_service import BookingService
+    from booking_tools import BOOKING_TOOLS
+    from calendar_service import CalendarService
+    from llm_orchestrator import LLMOrchestrator
+    from tenant_config import TenantRegistry
+
+    # 1. Load tenant from YAML (mirrors production registry lookup)
+    registry = TenantRegistry()
+    tenant_cfg = registry.get_by_phone(TENANT_PHONE)
+    assert tenant_cfg is not None, f"Tenant not found for {TENANT_PHONE}"
+    assert tenant_cfg.tenant_id == TENANT_ID
+
+    # 2. Set up services exactly as server.py start event handler does
+    calendar_svc = CalendarService()
+    booking_svc = BookingService(
+        calendar_service=calendar_svc,
+        tenant_config=tenant_cfg,
+        db=AsyncMock(),
+    )
+
+    # 3. Configure LLM with booking tools
+    customer_id = uuid.uuid4()
+    llm = LLMOrchestrator()
+    llm.configure_booking(booking_svc, BOOKING_TOOLS, customer_id)
+
+    # 4. Set booking instruction (same as server.py)
+    llm.system_prompt_extra = (
+        "\n\nYou have access to booking tools: check_availability, book_appointment, "
+        "cancel_appointment, reschedule_appointment. "
+        "Use them proactively when the customer wants to schedule, cancel, or reschedule a service."
+    )
+
+    # 5. Process a booking utterance
+    replies: list[str] = []
+    llm.on_full_ready = lambda text, _: replies.append(text)
+
+    date_str = tomorrow.strftime("%Y-%m-%d")
+    await llm.process_turn(
+        f"I need an AC tune-up tomorrow morning ({date_str}). "
+        "My name is Test User, phone 555-000-1234, address 123 Test St."
+    )
+
+    # 6. Assert booking confirmation
+    reply = replies[-1] if replies else ""
+    assert any(
+        w in reply.lower() for w in ["confirmed", "booked", "scheduled", "appointment", "all set"]
+    ), f"Expected booking confirmation, got: {reply!r}"
+
+    # 7. Verify calendar event was created
+    creds = await calendar_svc.get_credentials(TENANT_ID)
+    svc = build("calendar", "v3", credentials=creds)
+    now_utc = datetime.now(UTC)
+    result = (
+        svc.events()
+        .list(
+            calendarId=CALENDAR_ID,
+            timeMin=now_utc.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            timeMax=(now_utc + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            maxResults=10,
+            singleEvents=True,
+            orderBy="startTime",
+        )
+        .execute()
+    )
+    test_events = [e for e in result.get("items", []) if "Test User" in e.get("summary", "")]
+    assert len(test_events) > 0, "Expected 'Test User' event on calendar, found none"
+
+    # 8. Cleanup: delete test events
+    for e in test_events:
+        svc.events().delete(calendarId=CALENDAR_ID, eventId=e["id"]).execute()
