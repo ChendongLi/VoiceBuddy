@@ -883,62 +883,72 @@ async def handle_twilio_media(websocket):
                 called_number = custom.get("to", "")
                 logger.info("[%s] Twilio stream started: %s (CallSid=%s)", session_id[:8], stream_sid, call_sid)
 
-                # Customer lookup — personalize returning callers
+                # Greeting + customer lookup (greeting fires immediately, DB runs in background)
                 if caller_number and called_number:
                     tenant_cfg = tenant_registry.get_by_phone(called_number) if tenant_registry else None
+                    greeting = tenant_cfg.greeting if tenant_cfg else TenantConfig.greeting
+                    turn_context_id = f"{session_id[:8]}-greeting"
+                    tts_queue.put_nowait((greeting, turn_context_id))
+
                     if tenant_cfg:
-                        try:
-                            customer_svc = CustomerService()
-                            call_svc = CallService()
-                            async with async_session() as db:
-                                customer, is_new = await customer_svc.get_or_create(
-                                    db, tenant_cfg.tenant_id, caller_number
-                                )
-                                appointment = await customer_svc.get_upcoming_appointment(db, customer.id)
-                                llm.system_prompt_extra = customer_svc.build_customer_context(customer, appointment)
-                                await call_svc.start_call(
-                                    db, tenant_cfg.tenant_id, customer.id, call_sid or "", caller_number
-                                )
-                                logger.info(
-                                    "[%s] Customer: %s (new=%s)",
-                                    session_id[:8],
-                                    customer.id,
-                                    is_new,
-                                )
 
-                                # Configure booking tools with a call-scoped DB session
-                                from booking_service import BookingService
-                                from booking_tools import BOOKING_TOOLS
-                                from calendar_service import CalendarService
+                        async def setup_session(
+                            _tenant_cfg=tenant_cfg,
+                            _caller_number=caller_number,
+                            _call_sid=call_sid,
+                            _turn_ctx=turn_context_id,
+                        ):
+                            nonlocal booking_db_session
+                            try:
+                                customer_svc = CustomerService()
+                                call_svc = CallService()
+                                async with async_session() as db:
+                                    customer, is_new = await customer_svc.get_or_create(
+                                        db, _tenant_cfg.tenant_id, _caller_number
+                                    )
+                                    appointment = await customer_svc.get_upcoming_appointment(db, customer.id)
+                                    llm.system_prompt_extra = customer_svc.build_customer_context(customer, appointment)
+                                    await call_svc.start_call(
+                                        db, _tenant_cfg.tenant_id, customer.id, _call_sid or "", _caller_number
+                                    )
+                                    logger.info(
+                                        "[%s] Customer: %s (new=%s)",
+                                        session_id[:8],
+                                        customer.id,
+                                        is_new,
+                                    )
 
-                                booking_db_session = async_session()
-                                booking_db = await booking_db_session.__aenter__()
-                                calendar_svc = CalendarService(tenant_cfg)
-                                booking_svc = BookingService(calendar_svc, tenant_cfg, booking_db)
-                                llm.configure_booking(booking_svc, BOOKING_TOOLS, customer.id)
+                                    # Configure booking tools with a call-scoped DB session
+                                    from booking_service import BookingService
+                                    from booking_tools import BOOKING_TOOLS
+                                    from calendar_service import CalendarService
 
-                                booking_instruction = (
-                                    "\n\nYou have access to booking tools: check_availability, book_appointment, "
-                                    "cancel_appointment, reschedule_appointment. "
-                                    "Use them proactively when the customer wants to schedule, cancel, or reschedule a service."
-                                )
-                                llm.system_prompt_extra = (llm.system_prompt_extra or "") + booking_instruction
-                                logger.info("[%s] Booking tools configured", session_id[:8])
-                                # Play greeting followed by caller verification prompt
-                                turn_context_id = f"{session_id[:8]}-greeting"
-                                tts_queue.put_nowait((tenant_cfg.greeting, turn_context_id))
-                                cb = ConfirmationBuilder()
-                                name = customer.name if not is_new else None
-                                verify_msg = cb.build_verification_prompt(name)
-                                tts_queue.put_nowait((verify_msg, turn_context_id))
-                                tts_queue.put_nowait(("__turn_end__", turn_context_id))
-                        except Exception as e:
-                            logger.warning("[%s] Customer lookup failed: %s", session_id[:8], e)
+                                    booking_db_session = async_session()
+                                    booking_db = await booking_db_session.__aenter__()
+                                    calendar_svc = CalendarService(_tenant_cfg)
+                                    booking_svc = BookingService(calendar_svc, _tenant_cfg, booking_db)
+                                    llm.configure_booking(booking_svc, BOOKING_TOOLS, customer.id)
+
+                                    booking_instruction = (
+                                        "\n\nYou have access to booking tools: check_availability, book_appointment, "
+                                        "cancel_appointment, reschedule_appointment. "
+                                        "Use them proactively when the customer wants to schedule, cancel, or reschedule a service."
+                                    )
+                                    llm.system_prompt_extra = (llm.system_prompt_extra or "") + booking_instruction
+                                    logger.info("[%s] Booking tools configured", session_id[:8])
+
+                                    cb = ConfirmationBuilder()
+                                    name = customer.name if not is_new else None
+                                    verify_msg = cb.build_verification_prompt(name)
+                                    tts_queue.put_nowait((verify_msg, _turn_ctx))
+                                    tts_queue.put_nowait(("__turn_end__", _turn_ctx))
+                            except Exception as e:
+                                logger.warning("[%s] Customer lookup failed: %s", session_id[:8], e)
+                                tts_queue.put_nowait(("Could I get your name please?", _turn_ctx))
+                                tts_queue.put_nowait(("__turn_end__", _turn_ctx))
+
+                        asyncio.create_task(setup_session())
                     else:
-                        # No tenant config found — send default greeting
-                        default_greeting = TenantConfig.greeting
-                        turn_context_id = f"{session_id[:8]}-greeting"
-                        tts_queue.put_nowait((default_greeting, turn_context_id))
                         tts_queue.put_nowait(("__turn_end__", turn_context_id))
                         logger.info("[%s] No tenant config — sent default greeting", session_id[:8])
 
