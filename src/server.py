@@ -650,6 +650,7 @@ async def handle_twilio_media(websocket):
     outbound_seq = 0
     booking_db_session = None  # long-lived session for BookingService tool calls
     transcript_parts: list[str] = []
+    _background_tasks: set[asyncio.Task] = set()  # prevent GC of fire-and-forget tasks
 
     # Resolve voice from query param (e.g. /twilio-media?voice=allison)
     voice_id = resolve_voice_id(websocket.request.path)
@@ -899,6 +900,7 @@ async def handle_twilio_media(websocket):
                             _turn_ctx=turn_context_id,
                         ):
                             nonlocal booking_db_session
+                            logger.info("[%s] setup_session started", session_id[:8])
                             try:
                                 customer_svc = CustomerService()
                                 call_svc = CallService()
@@ -943,11 +945,20 @@ async def handle_twilio_media(websocket):
                                     tts_queue.put_nowait((verify_msg, _turn_ctx))
                                     tts_queue.put_nowait(("__turn_end__", _turn_ctx))
                             except Exception as e:
-                                logger.warning("[%s] Customer lookup failed: %s", session_id[:8], e)
+                                logger.warning("[%s] setup_session failed: %s", session_id[:8], e)
+                                llm.system_prompt_extra = (
+                                    "\n\nIMPORTANT: Booking tools are currently unavailable due to a system error. "
+                                    "Do NOT confirm, promise, or imply that any appointment has been booked. "
+                                    "Instead, tell the caller: 'I'm sorry, I'm having trouble accessing our "
+                                    "booking system right now. Please call back in a few minutes or I can "
+                                    "have someone call you back.'"
+                                )
                                 tts_queue.put_nowait(("Could I get your name please?", _turn_ctx))
                                 tts_queue.put_nowait(("__turn_end__", _turn_ctx))
 
-                        asyncio.create_task(setup_session())
+                        task = asyncio.create_task(setup_session())
+                        _background_tasks.add(task)
+                        task.add_done_callback(_background_tasks.discard)
                     else:
                         tts_queue.put_nowait(("__turn_end__", turn_context_id))
                         logger.info("[%s] No tenant config — sent default greeting", session_id[:8])
@@ -989,7 +1000,9 @@ async def handle_twilio_media(websocket):
         if full_transcript and call_sid and called_number:
             tenant_config = tenant_registry.get_by_phone(called_number)
             if tenant_config:
-                asyncio.create_task(_run_post_call(call_sid, full_transcript, tenant_config, caller_number))
+                task = asyncio.create_task(_run_post_call(call_sid, full_transcript, tenant_config, caller_number))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
 
         logger.info("Twilio MediaStream disconnected: %s", remote)
 
