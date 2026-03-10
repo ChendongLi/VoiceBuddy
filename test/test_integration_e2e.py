@@ -15,10 +15,11 @@ Run manually:
 Checks:
   1. HTTP /health endpoint → 200 + status=ok
   2. Neon/PostgreSQL DB connection + basic query
-  3. Google Calendar list_available_slots (real API)
-  4. Full LLM booking flow: Claude → check_availability → book_appointment
-  5. Calendar event visible after booking
-  6. Cleanup: test event deleted
+  3. DB pipeline: tenant FK, customer create, call record (full server.py flow)
+  4. Google Calendar list_available_slots (real API)
+  5. Full LLM booking flow: Claude → check_availability → book_appointment
+  6. Calendar event visible after booking
+  7. Cleanup: test event + DB records deleted
 """
 
 from __future__ import annotations
@@ -105,6 +106,60 @@ async def test_database_connection():
         count = result.scalar()
 
     assert isinstance(count, int)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_db_pipeline():
+    """
+    Mirrors the full server.py setup_session() DB flow:
+      - Tenant row exists (FK target)
+      - CustomerService.get_or_create() creates a new customer
+      - CallService.start_call() creates a call record
+      - All FKs resolve without error
+      - Cleanup: delete test customer + call records
+    """
+    import uuid
+
+    from sqlalchemy import delete
+
+    from call_service import CallService
+    from customer_service import CustomerService
+    from models import Call, Customer
+
+    test_phone = f"+1555{uuid.uuid4().hex[:7]}"  # unique fake number
+    test_call_sid = f"CA_test_{uuid.uuid4().hex[:16]}"
+
+    # Create a fresh engine/session to avoid asyncpg event-loop mismatch
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.orm import sessionmaker
+
+    _engine = create_async_engine(os.environ["DATABASE_URL"])
+    _Session = sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+
+    customer_svc = CustomerService()
+    call_svc = CallService()
+
+    async with _Session() as db:
+        # get_or_create should succeed (tenant FK satisfied)
+        customer, is_new = await customer_svc.get_or_create(db, TENANT_ID, test_phone)
+        assert is_new is True
+        assert customer.tenant_id == TENANT_ID
+        assert customer.phone_number == test_phone
+
+        # start_call should create a call record
+        call = await call_svc.start_call(db, TENANT_ID, customer.id, test_call_sid, test_phone)
+        assert call is not None
+        assert call.customer_id == customer.id
+
+        # Verify both records exist
+        c = await db.get(Customer, customer.id)
+        assert c is not None
+
+        # Cleanup
+        await db.execute(delete(Call).where(Call.twilio_call_sid == test_call_sid))
+        await db.execute(delete(Customer).where(Customer.id == customer.id))
+        await db.commit()
 
 
 @pytest.mark.integration
