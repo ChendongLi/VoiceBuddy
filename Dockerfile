@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir \
     -r requirements-server.txt
 
 COPY src/ ./src/
+COPY tenants/ ./tenants/
 
 # Create logs dir owned by app user so LatencyLogger can write to it
 RUN mkdir -p /app/logs && chown app:app /app/logs
