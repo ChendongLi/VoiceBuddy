@@ -224,9 +224,9 @@ async def test_llm_booking_flow_and_calendar_event(calendar_service, tenant, tom
     )
 
     reply = replies[-1] if replies else ""
-    assert any(w in reply.lower() for w in ["confirmed", "booked", "all set", "appointment id"]), (
-        f"Expected booking confirmation, got: {reply!r}"
-    )
+    assert any(
+        w in reply.lower() for w in ["confirmed", "booked", "all set", "appointment id"]
+    ), f"Expected booking confirmation, got: {reply!r}"
 
     # Verify event on Google Calendar
     creds = await calendar_service.get_credentials(TENANT_ID)
