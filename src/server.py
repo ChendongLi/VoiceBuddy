@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from call_service import CallService
 from confirmation_builder import ConfirmationBuilder
 from customer_service import CustomerService
-from database import async_session
+from database import async_session, engine
 from deepgram_client import DeepgramFluxClient
 from handoff_service import HandoffService
 from intent_detector import detect_handoff_intent
@@ -58,6 +58,40 @@ HANDOFF_BUSINESS_HOURS: dict[str, str] = {
     "saturday": os.environ.get("HANDOFF_HOURS_SAT", "10am-3pm"),
     "sunday": os.environ.get("HANDOFF_HOURS_SUN", "closed"),
 }
+
+
+async def sync_tenants_to_db(registry: TenantRegistry) -> None:
+    """Upsert tenant rows from the YAML registry into the DB."""
+    from models import Tenant
+
+    dialect = engine.dialect.name
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    else:
+        from sqlalchemy.dialects.sqlite import insert
+
+    async with async_session() as db:
+        for cfg in registry.all_tenants:
+            stmt = (
+                insert(Tenant)
+                .values(
+                    id=cfg.tenant_id,
+                    phone_number=cfg.phone_number,
+                    business_name=cfg.business_name,
+                    config_path=f"tenants/{cfg.tenant_id}.yaml",
+                )
+                .on_conflict_do_update(
+                    index_elements=["id"],
+                    set_={
+                        "phone_number": cfg.phone_number,
+                        "business_name": cfg.business_name,
+                    },
+                )
+            )
+            await db.execute(stmt)
+        await db.commit()
+    logger.info("Synced %d tenant(s) to DB", len(registry.all_tenants))
+
 
 HTML_PATH = Path(__file__).parent / "static" / "index.html"
 
@@ -1058,6 +1092,7 @@ async def main(host: str = "0.0.0.0", port: int = 8765):
     global tenant_registry
     tenant_registry = TenantRegistry()
     logger.info("Loaded %d tenant(s)", len(tenant_registry.all_tenants))
+    await sync_tenants_to_db(tenant_registry)
     set_tenant_registry(tenant_registry)
     set_twilio_media_handler(handle_twilio_media)
 
