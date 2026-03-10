@@ -245,7 +245,7 @@ async def test_booking_pipeline_creates_calendar_event(tomorrow):
         "Use them proactively when the customer wants to schedule, cancel, or reschedule a service."
     )
 
-    # 5. Process a booking utterance
+    # 5. Process booking — two turns (mirrors real call: ask → confirm slot)
     replies: list[str] = []
     llm.on_full_ready = lambda text, _: replies.append(text)
 
@@ -255,11 +255,14 @@ async def test_booking_pipeline_creates_calendar_event(tomorrow):
         "My name is Test User, phone 555-000-1234, address 123 Test St."
     )
 
-    # 6. Assert booking confirmation
-    reply = replies[-1] if replies else ""
+    # LLM may ask which slot — confirm the earliest one
+    await llm.process_turn("The earliest available slot works great, please book it.")
+
+    # 6. Assert booking confirmation in either turn's reply
+    all_replies = " ".join(replies).lower()
     assert any(
-        w in reply.lower() for w in ["confirmed", "booked", "scheduled", "appointment", "all set"]
-    ), f"Expected booking confirmation, got: {reply!r}"
+        w in all_replies for w in ["confirmed", "booked", "scheduled", "appointment", "all set", "you're set"]
+    ), f"Expected booking confirmation in replies, got: {replies!r}"
 
     # 7. Verify calendar event was created
     creds = await calendar_svc.get_credentials(TENANT_ID)
