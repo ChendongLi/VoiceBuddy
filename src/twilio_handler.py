@@ -50,15 +50,23 @@ def _validate_twilio_signature(request) -> bool:
     url = f"{proto}://{webhook_host}/incoming-call"
 
     body = _get_request_body(request)
-    params = parse_qs(body.decode("utf-8", errors="replace"))
+    body_str = body.decode("utf-8", errors="replace")
+    params = parse_qs(body_str, keep_blank_values=True)
     flat_params = {k: v[0] for k, v in params.items()}
 
-    logger.debug(
-        "Twilio sig validation: url=%s, params=%s, sig_present=%s, sig_prefix=%s",
+    # Compute signature for comparison (diagnostic)
+    try:
+        computed_sig = validator.compute_signature(url, flat_params)
+    except Exception:
+        computed_sig = "(error)"
+
+    logger.warning(
+        "Twilio sig diag: url=%s sig_match=%s computed=%s expected=%s raw_body=%r",
         url,
-        dict(flat_params),
-        bool(signature),
-        signature[:10] if signature else "(none)",
+        computed_sig == signature,
+        computed_sig[:16] if computed_sig else "(none)",
+        signature[:16] if signature else "(none)",
+        body[:300],
     )
 
     try:
