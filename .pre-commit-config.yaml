@@ -11,12 +11,19 @@ repos:
       - id: detect-private-key
       - id: check-merge-conflict
 
-  # Ruff — replaces black + isort + flake8 (matches CI)
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.10
+  # Ruff — fix + format + re-stage in one pass so the commit always includes fixes
+  - repo: local
     hooks:
-      # Linter (auto-fix safe issues)
-      - id: ruff
-        args: [--fix]
-      # Formatter
-      - id: ruff-format
+      - id: ruff-fix-and-format
+        name: ruff (fix + format + re-stage)
+        language: system
+        entry: >-
+          bash -c '
+            ruff check --fix "$@";
+            FIX_EXIT=$?;
+            ruff format "$@";
+            git add "$@";
+            exit $FIX_EXIT
+          ' --
+        types: [python]
+        pass_filenames: true
