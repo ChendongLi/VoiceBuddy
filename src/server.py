@@ -648,6 +648,7 @@ async def handle_twilio_media(websocket):
     caller_number: str | None = None
     called_number: str | None = None
     outbound_seq = 0
+    booking_db_session = None  # long-lived session for BookingService tool calls
     transcript_parts: list[str] = []
 
     # Resolve voice from query param (e.g. /twilio-media?voice=allison)
@@ -904,6 +905,25 @@ async def handle_twilio_media(websocket):
                                     customer.id,
                                     is_new,
                                 )
+
+                                # Configure booking tools with a call-scoped DB session
+                                from booking_service import BookingService
+                                from booking_tools import BOOKING_TOOLS
+                                from calendar_service import CalendarService
+
+                                booking_db_session = async_session()
+                                booking_db = await booking_db_session.__aenter__()
+                                calendar_svc = CalendarService(tenant_cfg)
+                                booking_svc = BookingService(calendar_svc, tenant_cfg, booking_db)
+                                llm.configure_booking(booking_svc, BOOKING_TOOLS, customer.id)
+
+                                booking_instruction = (
+                                    "\n\nYou have access to booking tools: check_availability, book_appointment, "
+                                    "cancel_appointment, reschedule_appointment. "
+                                    "Use them proactively when the customer wants to schedule, cancel, or reschedule a service."
+                                )
+                                llm.system_prompt_extra = (llm.system_prompt_extra or "") + booking_instruction
+                                logger.info("[%s] Booking tools configured", session_id[:8])
                                 # Play caller verification prompt
                                 cb = ConfirmationBuilder()
                                 name = customer.name if not is_new else None
@@ -937,6 +957,9 @@ async def handle_twilio_media(websocket):
 
         await dg.close()
         await tts.close()
+
+        if booking_db_session is not None:
+            await booking_db_session.__aexit__(None, None, None)
 
         if sm.current_state == State.USER_SPEAKING:
             sm.handle(Event.END_OF_TURN)
