@@ -21,9 +21,6 @@ load_dotenv()
 
 logger = logging.getLogger("voicebuddy.twilio")
 
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
-TWILIO_WEBHOOK_HOST = os.environ.get("TWILIO_WEBHOOK_HOST", "")
-
 
 def _get_request_body(request) -> bytes:
     """Safely extract request body — websockets Request may not expose body attribute."""
@@ -36,19 +33,48 @@ def _validate_twilio_signature(request) -> bool:
     if os.environ.get("SKIP_TWILIO_VALIDATION", "").lower() in ("1", "true", "yes"):
         logger.warning("Twilio signature validation SKIPPED (SKIP_TWILIO_VALIDATION=true)")
         return True
-    if not TWILIO_AUTH_TOKEN or not TWILIO_WEBHOOK_HOST:
+
+    # Read fresh each call to avoid stale module-level constants
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+    webhook_host = os.environ.get("TWILIO_WEBHOOK_HOST", "").strip()
+
+    if not auth_token or not webhook_host:
         logger.warning("Twilio signature validation skipped (TWILIO_AUTH_TOKEN or TWILIO_WEBHOOK_HOST not set)")
         return True
 
-    validator = RequestValidator(TWILIO_AUTH_TOKEN)
+    validator = RequestValidator(auth_token)
     signature = request.headers.get("X-Twilio-Signature", "")
-    url = f"https://{TWILIO_WEBHOOK_HOST}/incoming-call"
+
+    # Prefer X-Forwarded-Proto if set by LB, otherwise default to https
+    proto = request.headers.get("X-Forwarded-Proto", "https")
+    url = f"{proto}://{webhook_host}/incoming-call"
 
     body = _get_request_body(request)
     params = parse_qs(body.decode("utf-8", errors="replace"))
     flat_params = {k: v[0] for k, v in params.items()}
 
-    return validator.validate(url, flat_params, signature)
+    logger.debug(
+        "Twilio sig validation: url=%s, params=%s, sig_present=%s, sig_prefix=%s",
+        url,
+        dict(flat_params),
+        bool(signature),
+        signature[:10] if signature else "(none)",
+    )
+
+    try:
+        result = validator.validate(url, flat_params, signature)
+    except Exception as exc:
+        logger.error("Twilio signature validation error: %s", exc, exc_info=True)
+        return False
+
+    if not result:
+        logger.warning(
+            "Twilio signature mismatch: url=%s, param_keys=%s",
+            url,
+            list(flat_params.keys()),
+        )
+
+    return result
 
 
 def build_twiml_response() -> str:
@@ -77,7 +103,7 @@ def handle_incoming_call(connection, request):
         twiml = build_twiml_response()
         response = connection.respond(HTTPStatus.OK, twiml)
         response.headers["Content-Type"] = "application/xml"
-        logger.info("Incoming call → TwiML response (host=%s)", TWILIO_WEBHOOK_HOST or "localhost")
+        logger.info("Incoming call → TwiML response (host=%s)", os.environ.get("TWILIO_WEBHOOK_HOST", "localhost"))
         return response
     except Exception as exc:
         logger.error("Error handling /incoming-call: %s", exc, exc_info=True)
