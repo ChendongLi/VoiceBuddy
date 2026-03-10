@@ -47,6 +47,18 @@ class TestBuildTwiml:
         twiml = build_twiml_response()
         assert "my-host.com" in twiml
 
+    @patch.dict("os.environ", {"TWILIO_WEBHOOK_HOST": "example.ngrok.io"})
+    def test_embeds_from_to_parameters(self):
+        twiml = build_twiml_response(from_number="+15551234567", to_number="+15559876543")
+        assert '<Parameter name="from" value="+15551234567"/>' in twiml
+        assert '<Parameter name="to" value="+15559876543"/>' in twiml
+        assert "</Stream>" in twiml
+
+    @patch.dict("os.environ", {"TWILIO_WEBHOOK_HOST": "example.ngrok.io"})
+    def test_no_parameters_when_empty(self):
+        twiml = build_twiml_response()
+        assert "<Parameter" not in twiml
+
 
 # ---------------------------------------------------------------------------
 # Signature validation (via handle_incoming_call)

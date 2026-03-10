@@ -85,17 +85,26 @@ def _validate_twilio_signature(request) -> bool:
     return result
 
 
-def build_twiml_response() -> str:
-    """Build TwiML XML that connects the call to our MediaStream WebSocket."""
+def build_twiml_response(from_number: str = "", to_number: str = "") -> str:
+    """Build TwiML XML that connects the call to our MediaStream WebSocket.
+
+    Embeds from/to as <Parameter> children so the MediaStream ``start`` event
+    carries them in ``customParameters``.
+    """
     # Read fresh each call so runtime env changes (e.g. TWILIO_WEBHOOK_HOST) take effect
     host = os.environ.get("TWILIO_WEBHOOK_HOST", "") or "localhost:8766"
     scheme = "ws" if host.startswith("localhost") or host.startswith("127.") else "wss"
     ws_url = f"{scheme}://{host}/twilio-media"
+
+    params = ""
+    if from_number or to_number:
+        params = f'<Parameter name="from" value="{from_number}"/>' f'<Parameter name="to" value="{to_number}"/>'
+
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response>"
         "<Connect>"
-        f'<Stream url="{ws_url}" />'
+        f'<Stream url="{ws_url}">{params}</Stream>'
         "</Connect>"
         "</Response>"
     )

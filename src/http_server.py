@@ -76,6 +76,7 @@ async def handle_incoming_call(request: web.Request) -> web.Response:
 
     parsed = parse_qs(body.decode("utf-8", errors="replace"))
     # URL form encoding turns '+' into ' ' — normalize back to E.164
+    from_number = (parsed.get("From", [""])[0]).replace(" ", "+")
     to_number = (parsed.get("To", [""])[0]).replace(" ", "+")
     if _tenant_registry is not None and to_number:
         tenant = _tenant_registry.get_by_phone(to_number)
@@ -86,7 +87,7 @@ async def handle_incoming_call(request: web.Request) -> web.Response:
             )
             return web.Response(status=200, text=reject_twiml, content_type="application/xml")
 
-    twiml = build_twiml_response()
+    twiml = build_twiml_response(from_number, to_number)
     logger.info(
         "Incoming call → TwiML for %s (host=%s)",
         to_number,
