@@ -21,6 +21,7 @@ load_dotenv()
 
 logger = logging.getLogger("voicebuddy.twilio")
 
+
 def _get_request_body(request) -> bytes:
     """Safely extract request body — websockets Request may not expose body attribute."""
     return getattr(request, "body", None) or b""
@@ -55,7 +56,7 @@ def _validate_twilio_signature(request) -> bool:
     logger.debug(
         "Twilio sig validation: url=%s, params=%s, sig_present=%s, sig_prefix=%s",
         url,
-        {k: v for k, v in flat_params.items()},
+        dict(flat_params),
         bool(signature),
         signature[:10] if signature else "(none)",
     )

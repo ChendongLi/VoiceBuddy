@@ -84,7 +84,14 @@ class TestIncomingCallHandler:
         assert responses[0].headers["Content-Type"] == "application/xml"
         assert "<Response>" in responses[0].body
 
-    @patch.dict("os.environ", {"TWILIO_AUTH_TOKEN": "test-token-123", "TWILIO_WEBHOOK_HOST": "example.ngrok.io", "SKIP_TWILIO_VALIDATION": ""})
+    @patch.dict(
+        "os.environ",
+        {
+            "TWILIO_AUTH_TOKEN": "test-token-123",
+            "TWILIO_WEBHOOK_HOST": "example.ngrok.io",
+            "SKIP_TWILIO_VALIDATION": "",
+        },
+    )
     @patch("twilio_handler.RequestValidator")
     def test_invalid_signature_returns_403(self, mock_validator_cls):
         from twilio_handler import handle_incoming_call
@@ -132,7 +139,9 @@ class TestValidateTwilioSignature:
 
         assert _validate_twilio_signature(self._make_request()) is True
 
-    @patch.dict("os.environ", {"TWILIO_AUTH_TOKEN": "", "TWILIO_WEBHOOK_HOST": "host.com", "SKIP_TWILIO_VALIDATION": ""})
+    @patch.dict(
+        "os.environ", {"TWILIO_AUTH_TOKEN": "", "TWILIO_WEBHOOK_HOST": "host.com", "SKIP_TWILIO_VALIDATION": ""}
+    )
     def test_missing_auth_token_returns_true(self):
         from twilio_handler import _validate_twilio_signature
 
@@ -144,7 +153,10 @@ class TestValidateTwilioSignature:
 
         assert _validate_twilio_signature(self._make_request()) is True
 
-    @patch.dict("os.environ", {"TWILIO_AUTH_TOKEN": "  tok  ", "TWILIO_WEBHOOK_HOST": "  host.com  ", "SKIP_TWILIO_VALIDATION": ""})
+    @patch.dict(
+        "os.environ",
+        {"TWILIO_AUTH_TOKEN": "  tok  ", "TWILIO_WEBHOOK_HOST": "  host.com  ", "SKIP_TWILIO_VALIDATION": ""},
+    )
     @patch("twilio_handler.RequestValidator")
     def test_strips_whitespace_from_env(self, mock_validator_cls):
         from twilio_handler import _validate_twilio_signature
@@ -153,7 +165,9 @@ class TestValidateTwilioSignature:
         _validate_twilio_signature(self._make_request(signature="sig"))
         mock_validator_cls.assert_called_once_with("tok")
 
-    @patch.dict("os.environ", {"TWILIO_AUTH_TOKEN": "tok", "TWILIO_WEBHOOK_HOST": "host.com", "SKIP_TWILIO_VALIDATION": ""})
+    @patch.dict(
+        "os.environ", {"TWILIO_AUTH_TOKEN": "tok", "TWILIO_WEBHOOK_HOST": "host.com", "SKIP_TWILIO_VALIDATION": ""}
+    )
     @patch("twilio_handler.RequestValidator")
     def test_uses_x_forwarded_proto(self, mock_validator_cls):
         from twilio_handler import _validate_twilio_signature
@@ -164,7 +178,9 @@ class TestValidateTwilioSignature:
         call_args = mock_validator_cls.return_value.validate.call_args
         assert call_args[0][0] == "https://host.com/incoming-call"
 
-    @patch.dict("os.environ", {"TWILIO_AUTH_TOKEN": "tok", "TWILIO_WEBHOOK_HOST": "host.com", "SKIP_TWILIO_VALIDATION": ""})
+    @patch.dict(
+        "os.environ", {"TWILIO_AUTH_TOKEN": "tok", "TWILIO_WEBHOOK_HOST": "host.com", "SKIP_TWILIO_VALIDATION": ""}
+    )
     @patch("twilio_handler.RequestValidator")
     def test_defaults_to_https_without_forwarded_proto(self, mock_validator_cls):
         from twilio_handler import _validate_twilio_signature
@@ -174,7 +190,9 @@ class TestValidateTwilioSignature:
         call_args = mock_validator_cls.return_value.validate.call_args
         assert call_args[0][0] == "https://host.com/incoming-call"
 
-    @patch.dict("os.environ", {"TWILIO_AUTH_TOKEN": "tok", "TWILIO_WEBHOOK_HOST": "host.com", "SKIP_TWILIO_VALIDATION": ""})
+    @patch.dict(
+        "os.environ", {"TWILIO_AUTH_TOKEN": "tok", "TWILIO_WEBHOOK_HOST": "host.com", "SKIP_TWILIO_VALIDATION": ""}
+    )
     @patch("twilio_handler.RequestValidator")
     def test_parses_body_params(self, mock_validator_cls):
         from twilio_handler import _validate_twilio_signature
@@ -187,7 +205,9 @@ class TestValidateTwilioSignature:
         assert flat_params["From"] == "+15551234567"
         assert flat_params["To"] == "+15559876543"
 
-    @patch.dict("os.environ", {"TWILIO_AUTH_TOKEN": "tok", "TWILIO_WEBHOOK_HOST": "host.com", "SKIP_TWILIO_VALIDATION": ""})
+    @patch.dict(
+        "os.environ", {"TWILIO_AUTH_TOKEN": "tok", "TWILIO_WEBHOOK_HOST": "host.com", "SKIP_TWILIO_VALIDATION": ""}
+    )
     @patch("twilio_handler.RequestValidator")
     def test_validator_exception_returns_false(self, mock_validator_cls):
         from twilio_handler import _validate_twilio_signature
