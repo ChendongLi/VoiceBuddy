@@ -924,15 +924,23 @@ async def handle_twilio_media(websocket):
                                 )
                                 llm.system_prompt_extra = (llm.system_prompt_extra or "") + booking_instruction
                                 logger.info("[%s] Booking tools configured", session_id[:8])
-                                # Play caller verification prompt
+                                # Play greeting followed by caller verification prompt
+                                turn_context_id = f"{session_id[:8]}-greeting"
+                                tts_queue.put_nowait((tenant_cfg.greeting, turn_context_id))
                                 cb = ConfirmationBuilder()
                                 name = customer.name if not is_new else None
                                 verify_msg = cb.build_verification_prompt(name)
-                                turn_context_id = f"{session_id[:8]}-verify"
                                 tts_queue.put_nowait((verify_msg, turn_context_id))
                                 tts_queue.put_nowait(("__turn_end__", turn_context_id))
                         except Exception as e:
                             logger.warning("[%s] Customer lookup failed: %s", session_id[:8], e)
+                    else:
+                        # No tenant config found — send default greeting
+                        default_greeting = TenantConfig.greeting
+                        turn_context_id = f"{session_id[:8]}-greeting"
+                        tts_queue.put_nowait((default_greeting, turn_context_id))
+                        tts_queue.put_nowait(("__turn_end__", turn_context_id))
+                        logger.info("[%s] No tenant config — sent default greeting", session_id[:8])
 
             elif event == "media":
                 payload = msg.get("media", {}).get("payload", "")

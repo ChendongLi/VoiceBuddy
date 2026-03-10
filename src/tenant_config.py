@@ -34,6 +34,7 @@ class TenantConfig:
     fallback_number: str
     business_hours: dict  # {mon_fri, saturday, sunday}
     timezone: str  # IANA timezone, e.g. "America/Vancouver"
+    greeting: str = "Hi! Thanks for calling. I'm an AI assistant here to help you. How can I help you today?"
 
 
 class TenantRegistry:
@@ -68,6 +69,7 @@ class TenantRegistry:
                     fallback_number=data.get("fallback_number", ""),
                     business_hours=data.get("business_hours", {}),
                     timezone=data.get("timezone", "UTC"),
+                    greeting=data.get("greeting", TenantConfig.greeting),
                 )
                 self._by_phone[tenant.phone_number] = tenant
                 self._by_id[tenant.tenant_id] = tenant

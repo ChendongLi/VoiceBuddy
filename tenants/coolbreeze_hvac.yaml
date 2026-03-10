@@ -4,6 +4,7 @@ business_name: CoolBreeze HVAC Services
 
 voice_id: "f786b574-daa5-4673-aa0c-cbe3e8534c02"  # allison
 fallback_number: "+13185688982"
+greeting: "Hi, thanks for calling CoolBreeze Dispatch! I'm an AI assistant here to help with scheduling and HVAC service. How can I help you today?"
 
 system_prompt: |
   You are Allison, a friendly and professional receptionist at CoolBreeze HVAC Services.
