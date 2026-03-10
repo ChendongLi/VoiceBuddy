@@ -11,6 +11,7 @@ Small service businesses — HVAC, plumbing, dental, physio, law firms — miss 
 ## What It Does
 
 - **Answers inbound calls 24/7** — never a busy line, never voicemail
+- **Greets callers immediately** — tenant-configured greeting fires the instant the call connects, before any DB work
 - **Books appointments end-to-end** — checks calendar availability, confirms a slot, creates a Google Calendar event
 - **Handles interruptions naturally** — barge-in detection cancels bot speech mid-sentence
 - **Identifies returning callers** — looks up customers by phone number
@@ -377,6 +378,7 @@ providers:
     calendar_id: lichendong@gmail.com
 
 buffer_min: 15
+greeting: "Hi, I am Alison for CoolBreeze HVAC. How can I help you today?"
 cancellation_policy: "Please give us 24 hours notice to cancel or reschedule."
 
 business_hours:
@@ -402,6 +404,7 @@ filler_phrases:
 |---|---|
 | Single port (8766) for HTTP + WebSocket | ngrok free tier allows only one tunnel |
 | aiohttp for Twilio webhooks | Existing `websockets` server kept for browser UI; aiohttp wraps Twilio MediaStream in `_WsAdapter` |
+| Greeting before DB lookup | Greeting queued to TTS immediately on `start` event; customer lookup + booking setup run as `asyncio.create_task()` in parallel — caller hears Alison with zero DB latency |
 | Non-streaming for tool-use responses | Claude streaming API is incompatible with `tool_use` blocks; text queued to TTS directly when no tokens stream |
 | SQLite locally / PostgreSQL in prod | Zero-dependency local dev; `aiosqlite` + `asyncpg` swap via `DATABASE_URL` |
 | Neon over Cloud SQL | Free tier, no sidecar proxy needed, standard connection string |
@@ -427,6 +430,8 @@ filler_phrases:
 | AGE-20 | Post-call — transcript + AI summary + SMS | ✅ |
 | AGE-21 | Resilience — circuit breaker + call drop guard | ✅ |
 | AGE-22 | Timezone — bookings in tenant local time | ✅ |
+| AGE-23 | Tenant-configured greeting on call connect | ✅ |
+| AGE-24 | Greeting fires immediately — DB lookup parallelized | ✅ |
 
 ---
 
