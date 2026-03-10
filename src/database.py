@@ -10,7 +10,12 @@ DATABASE_URL = os.getenv(
     "postgresql+asyncpg://voicebuddy:voicebuddy@localhost:5432/voicebuddy",
 )
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,  # test connection before use — handles Neon idle timeouts
+    pool_recycle=300,  # recycle connections every 5 min (Neon closes idle at ~5 min)
+)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
