@@ -927,7 +927,7 @@ async def handle_twilio_media(websocket):
 
                                     booking_db_session = async_session()
                                     booking_db = await booking_db_session.__aenter__()
-                                    calendar_svc = CalendarService(_tenant_cfg)
+                                    calendar_svc = CalendarService()
                                     booking_svc = BookingService(calendar_svc, _tenant_cfg, booking_db)
                                     llm.configure_booking(booking_svc, BOOKING_TOOLS, customer.id)
 
