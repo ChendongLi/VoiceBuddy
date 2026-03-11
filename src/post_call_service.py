@@ -85,7 +85,13 @@ class PostCallService:
                 system=SUMMARY_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": transcript}],
             )
-            text = response.content[0].text
+            text = response.content[0].text.strip()
+            # Strip markdown code fences if Claude wraps the JSON anyway
+            if text.startswith("```"):
+                text = text.split("```", 2)[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
             return json.loads(text)
         except (json.JSONDecodeError, IndexError, KeyError) as e:
             logger.warning("Failed to parse summary response: %s", e)
