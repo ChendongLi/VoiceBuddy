@@ -965,8 +965,13 @@ async def handle_twilio_media(websocket):
                                     booking_svc = BookingService(calendar_svc, _tenant_cfg, booking_db)
                                     llm.configure_booking(booking_svc, BOOKING_TOOLS, customer.id)
 
+                                    from datetime import date as _date
+
+                                    _today = _date.today().strftime("%A, %B %d, %Y")
                                     booking_instruction = (
-                                        "\n\nYou have access to booking tools: check_availability, book_appointment, "
+                                        f"\n\nToday's date is {_today}. Always use this as your reference for 'today', "
+                                        "'tomorrow', 'this week', etc. Never infer dates from training data.\n\n"
+                                        "You have access to booking tools: check_availability, book_appointment, "
                                         "cancel_appointment, reschedule_appointment. "
                                         "Use them proactively when the customer wants to schedule, cancel, or reschedule a service."
                                     )
