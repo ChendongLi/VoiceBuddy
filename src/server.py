@@ -684,6 +684,7 @@ async def handle_twilio_media(websocket):
     outbound_seq = 0
     booking_db_session = None  # long-lived session for BookingService tool calls
     transcript_parts: list[str] = []
+    conversation_log: list[str] = []  # full conversation: both caller and Alison turns
     _background_tasks: set[asyncio.Task] = set()  # prevent GC of fire-and-forget tasks
 
     # Resolve voice from query param (e.g. /twilio-media?voice=allison)
@@ -724,6 +725,7 @@ async def handle_twilio_media(websocket):
         event_queue.put_nowait(("llm_filler_ready", {"text": text, "ttft_ms": ttft_ms}))
 
     def on_full_ready(text, ttft_ms):
+        conversation_log.append(f"Alison: {text}")
         event_queue.put_nowait(("llm_full_ready", {"text": text, "ttft_ms": ttft_ms}))
 
     def on_full_token(token):
@@ -810,6 +812,7 @@ async def handle_twilio_media(websocket):
 
                     if transcript:
                         transcript_parts.append(transcript)
+                        conversation_log.append(f"Caller: {transcript}")
                         turn_context_id = f"{session_id[:8]}-{sm.ctx.turn_id}"
                         llm_cancelled = False
                         llm_task = asyncio.create_task(llm.process_turn(transcript))
@@ -1035,7 +1038,7 @@ async def handle_twilio_media(websocket):
             sm.handle(Event.RESET)
 
         # Fire post-call processing (non-blocking)
-        full_transcript = "\n".join(transcript_parts)
+        full_transcript = "\n".join(conversation_log) if conversation_log else "\n".join(transcript_parts)
         if full_transcript and call_sid and called_number:
             tenant_config = tenant_registry.get_by_phone(called_number)
             if tenant_config:
