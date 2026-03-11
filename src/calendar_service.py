@@ -160,8 +160,8 @@ class CalendarService:
             "start": {"dateTime": start_dt.isoformat(), "timeZone": timezone},
             "end": {"dateTime": end_dt.isoformat(), "timeZone": timezone},
         }
-        if attendee_email:
-            event_body["attendees"] = [{"email": attendee_email}]
+        # Note: attendees intentionally omitted — service accounts cannot invite
+        # attendees without Domain-Wide Delegation. Event is for internal dispatch only.
 
         event = service.events().insert(calendarId=calendar_id, body=event_body).execute()
         event_id: str = event["id"]
