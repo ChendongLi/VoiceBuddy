@@ -51,12 +51,17 @@ class PostCallService:
             # 2. Generate AI summary
             summary = await self._generate_summary(transcript_text)
 
-            # 3. Update transcript summary and call outcome
+            # 3. Update transcript summary, call outcome, and customer name
             transcript.summary = json.dumps(summary)
             result = await db.execute(select(Call).where(Call.id == call_id))
             call = result.scalar_one_or_none()
             if call:
                 call.outcome = summary.get("outcome", "other")
+
+            # Save customer name if learned during the call
+            customer_name = summary.get("customer_name")
+            if customer_name and customer and not customer.name:
+                customer.name = customer_name
 
             await db.commit()
             logger.info("Post-call processed for call_id=%s outcome=%s", call_id, summary.get("outcome"))
