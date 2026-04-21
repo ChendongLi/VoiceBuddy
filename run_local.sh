@@ -109,12 +109,10 @@ install_deps
 start_postgres
 run_migrations
 
-HTTP_PORT="${HTTP_PORT:-8766}"
 info "Starting server..."
 info "Browser UI:      http://localhost:$PORT"
 info "WebSocket:       ws://localhost:$PORT/ws"
-info "Twilio webhook:  POST http://localhost:$HTTP_PORT/incoming-call"
-info "(websockets only accepts GET — Twilio HTTP runs on a separate port)"
+info "Twilio webhook:  POST http://localhost:$PORT/incoming-call"
 info "Press Ctrl+C to stop."
 echo ""
 
