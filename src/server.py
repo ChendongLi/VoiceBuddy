@@ -15,13 +15,11 @@ import logging
 import os
 import sys
 import time
-from http import HTTPStatus
 from pathlib import Path
 
 from sqlalchemy import select
-from websockets.asyncio.server import serve
 
-from http_server import set_tenant_registry, set_twilio_media_handler, start_http_server
+from http_server import set_browser_ws_handler, set_tenant_registry, set_twilio_media_handler, start_http_server
 from tenant_config import TenantConfig, TenantRegistry
 from voice_config import resolve_voice_id
 
@@ -91,41 +89,6 @@ async def sync_tenants_to_db(registry: TenantRegistry) -> None:
             await db.execute(stmt)
         await db.commit()
     logger.info("Synced %d tenant(s) to DB", len(registry.all_tenants))
-
-
-HTML_PATH = Path(__file__).parent / "static" / "index.html"
-
-
-def _load_html() -> str:
-    """Load index.html content at startup."""
-    return HTML_PATH.read_text(encoding="utf-8")
-
-
-HTML_CONTENT = _load_html()
-
-
-def process_request(connection, request):
-    """Route WebSocket and GET HTTP requests.
-
-    NOTE: POST /incoming-call is handled by the aiohttp HTTP server on HTTP_PORT (default 8766).
-    websockets only supports GET — POSTs are rejected at the protocol level.
-
-    HTTP: GET / (UI), GET /health (probe)
-    WS:  /ws (browser), /twilio-media (Twilio MediaStream)
-    """
-    if request.path == "/health":
-        response = connection.respond(HTTPStatus.OK, '{"status":"ok"}')
-        response.headers["Content-Type"] = "application/json"
-        return response
-    if request.path == "/":
-        response = connection.respond(HTTPStatus.OK, HTML_CONTENT)
-        response.headers["Content-Type"] = "text/html; charset=utf-8"
-        return response
-    if request.path == "/ws" or request.path.startswith("/ws?"):
-        return None  # proceed with WebSocket upgrade
-    if request.path == "/twilio-media" or request.path.startswith("/twilio-media?"):
-        return None  # proceed with WebSocket upgrade
-    return connection.respond(HTTPStatus.NOT_FOUND, "Not Found")
 
 
 async def handle_connection(websocket):
@@ -309,7 +272,14 @@ async def handle_connection(websocket):
     # --- Event processor (background task) ---
 
     async def process_events():
-        nonlocal turn_context_id, vad_speech_active, llm_task, last_vad_speech_start_ms, pending_barge_in, llm_cancelled
+        nonlocal \
+            turn_context_id, \
+            vad_speech_active, \
+            llm_task, \
+            last_vad_speech_start_ms, \
+            pending_barge_in, \
+            llm_cancelled, \
+            turn_tokens_streamed
         while True:
             event_type, data = await event_queue.get()
             try:
@@ -502,19 +472,23 @@ async def handle_connection(websocket):
 
                 elif event_type == "llm_full_token":
                     if not llm_cancelled:
+                        turn_tokens_streamed += 1
                         splitter.feed(data["token"])
 
                 elif event_type == "llm_full_ready":
                     if llm_cancelled:
                         logger.debug("[%s] Dropping stale llm_full_ready", session_id[:8])
                     else:
-                        # Flush remaining sentence from splitter
                         splitter.flush()
-                        # Signal TTS worker: no more sentences for this turn
+                        full_text = data["text"]
+                        # Sonnet uses non-streaming create() — no llm_full_token events fire.
+                        # Queue the full text directly so TTS speaks it.
+                        if turn_tokens_streamed == 0 and full_text:
+                            tts_queue.put_nowait((full_text, turn_context_id))
+                        turn_tokens_streamed = 0
                         tts_queue.put_nowait(("__turn_end__", turn_context_id))
 
                         sm.handle(Event.LLM_FULL_READY)
-                        full_text = data["text"]
 
                         # Log Stage 3: full response TTFT
                         if "user_stopped_speaking" in sm.ctx.markers:
@@ -558,6 +532,7 @@ async def handle_connection(websocket):
                 log.log_error(session_id, sm.ctx.turn_id, "event_processing_error", f"{event_type}: {e}")
                 logger.warning("[%s] Event error: %s — %s", session_id[:8], event_type, e)
 
+    turn_tokens_streamed = 0
     event_task = asyncio.create_task(process_events())
 
     # --- TTS worker (background task) ---
@@ -1081,20 +1056,10 @@ async def _run_post_call(
         logger.exception("Post-call processing failed for call_sid=%s", call_sid)
 
 
-async def dispatch_connection(websocket):
-    """Route WebSocket connections to the appropriate handler based on path."""
-    path = websocket.request.path
-    if path == "/twilio-media" or path.startswith("/twilio-media?"):
-        await handle_twilio_media(websocket)
-    else:
-        await handle_connection(websocket)
-
-
 async def main(host: str = "0.0.0.0", port: int = 8765):
     """Start the VoiceBuddy server."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    logger.info("Starting VoiceBuddy server on ws://%s:%d", host, port)
-    logger.info("Open http://%s:%d/ in your browser", host, port)
+    logger.info("Starting VoiceBuddy on http://%s:%d", host, port)
 
     # Load tenant configs from tenants/*.yaml
     global tenant_registry
@@ -1103,6 +1068,7 @@ async def main(host: str = "0.0.0.0", port: int = 8765):
     await sync_tenants_to_db(tenant_registry)
     set_tenant_registry(tenant_registry)
     set_twilio_media_handler(handle_twilio_media)
+    set_browser_ws_handler(handle_connection)
 
     # Pre-warm Silero VAD model so the first WebSocket connection doesn't pay
     # the ONNX session-creation cost. Each VADDetector still gets its own
@@ -1117,15 +1083,11 @@ async def main(host: str = "0.0.0.0", port: int = 8765):
     except Exception as _e:
         logger.warning("VAD pre-load failed (non-fatal): %s", _e)
 
-    # Start aiohttp HTTP server for Twilio webhooks (POST /incoming-call)
-    # websockets only accepts GET — HTTP POSTs need a real HTTP server
-    http_runner = await start_http_server(host=host)
-
-    async with serve(dispatch_connection, host, port, process_request=process_request) as server:
-        try:
-            await server.serve_forever()
-        finally:
-            await http_runner.cleanup()
+    http_runner = await start_http_server(host=host, port=port)
+    try:
+        await asyncio.Future()  # run forever until cancelled
+    finally:
+        await http_runner.cleanup()
 
 
 if __name__ == "__main__":

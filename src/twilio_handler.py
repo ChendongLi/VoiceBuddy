@@ -23,7 +23,6 @@ logger = logging.getLogger("voicebuddy.twilio")
 
 
 def _get_request_body(request) -> bytes:
-    """Safely extract request body — websockets Request may not expose body attribute."""
     return getattr(request, "body", None) or b""
 
 
