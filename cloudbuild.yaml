@@ -19,34 +19,28 @@ steps:
       - "--all-tags"
       - "us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy"
 
-  # Step 3: Apply all k8s manifests (namespace, secrets refs, service, ingress, hpa)
-  - name: "gcr.io/cloud-builders/kubectl"
-    id: "apply-manifests"
+  # Step 3: Deploy to Cloud Run
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: "deploy"
     waitFor: ["push"]
     args:
-      - apply
-      - "-f"
-      - "k8s/"
-      - "--namespace"
-      - "voicebuddy"
-    env:
-      - "CLOUDSDK_COMPUTE_ZONE=us-west1-b"
-      - "CLOUDSDK_CONTAINER_CLUSTER=voicebuddy-standard"
-
-  # Step 4: Roll out new image to the deployment
-  - name: "gcr.io/cloud-builders/kubectl"
-    id: "rollout"
-    waitFor: ["apply-manifests"]
-    args:
-      - set
-      - image
-      - "deployment/voicebuddy"
-      - "voicebuddy=us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy:$COMMIT_SHA"
-      - "--namespace"
-      - "voicebuddy"
-    env:
-      - "CLOUDSDK_COMPUTE_ZONE=us-west1-b"
-      - "CLOUDSDK_CONTAINER_CLUSTER=voicebuddy-standard"
+      - gcloud
+      - run
+      - deploy
+      - voicebuddy
+      - "--image=us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy:$COMMIT_SHA"
+      - "--region=us-west1"
+      - "--platform=managed"
+      - "--service-account=voicebuddy-calendar@agentlens-489006.iam.gserviceaccount.com"
+      - "--port=8080"
+      - "--timeout=3600"
+      - "--min-instances=1"
+      - "--max-instances=10"
+      - "--memory=1Gi"
+      - "--cpu=1"
+      - "--allow-unauthenticated"
+      - "--set-env-vars=SERVER_HOST=0.0.0.0,TWILIO_WEBHOOK_HOST=voicebuddy.agentlens.net"
+      - "--set-secrets=DEEPGRAM_API_KEY=DEEPGRAM_API_KEY:latest,CLAUDE_API_KEY=CLAUDE_API_KEY:latest,CARTESIA_API_KEY=CARTESIA_API_KEY:latest,CARTESIA_VOICE_ID=CARTESIA_VOICE_ID:latest,TWILIO_ACCOUNT_SID=TWILIO_ACCOUNT_SID:latest,TWILIO_AUTH_TOKEN=TWILIO_AUTH_TOKEN:latest,DATABASE_URL=VOICEBUDDY_DATABASE_URL:latest,/app/tokens/calendar_service_account.json=VOICEBUDDY_CALENDAR_SA:latest"
 
 images:
   - "us-west1-docker.pkg.dev/agentlens-489006/voicebuddy/voicebuddy:$COMMIT_SHA"
@@ -54,5 +48,3 @@ images:
 
 options:
   logging: CLOUD_LOGGING_ONLY
-
-# Trigger on push to main branch (configured in Cloud Build trigger settings)
